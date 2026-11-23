@@ -401,3 +401,8 @@ dialog::backdrop { background: rgba(4, 4, 14, .85); }
 .barra-selecao { position: fixed; z-index: 40; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 10px 14px; box-shadow: 0 10px 30px rgba(0, 0, 0, .6); }
 .perigo-forte { background: linear-gradient(135deg, #e0294b, #9e1532); }
 .aviso .btn { margin-left: 8px; height: 26px; }
+
+/* Sua marca */
+.marca-linha { display: flex; gap: 10px; align-items: center; }
+.marca-logo { flex: none; width: 64px; height: 64px; border-radius: 50%; object-fit: cover; border: 1px solid var(--linha2); }
+.marca-logo.vazio { display: grid; place-items: center; color: var(--fraco); font-size: 11px; }

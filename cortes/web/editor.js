@@ -27,6 +27,10 @@ const PRESETS = {
     f: () => [vid('jogo', 'Gameplay', 'gameplay', 0, 656, 1080, 608)], mapa: [['t', 0, 3.6, 9, 1.6], ['j', 0, 5.4, 9, 5.1]] },
   jogo_chat: { nome: 'Gameplay + chat lateral', desc: 'Jogo à esquerda e o chat real da gravação em coluna.', cam: false, chat: true, legY: 1500, legX: 360,
     f: () => [vid('jogo', 'Gameplay', 'gameplay', 0, 0, 720, 1920)], mapa: [['j', 0, 0, 6, 16], ['h', 6, 0, 3, 16]] },
+  editorial_branco: { nome: 'Editorial Branco', desc: 'Cabeçalho branco com logo redonda, @ e manchete; gameplay no meio e webcam embaixo, com linha fina entre os dois.', cam: true, editorial: true, fmt: ['9:16'],
+    mapa: [['t', 0, 0, 9, 4.2], ['j', 0, 4.2, 9, 5.9], ['c', 0, 10.1, 9, 5.9]] },
+  editorial_preto: { nome: 'Editorial Preto', desc: 'O mesmo editorial com cabeçalho preto e letras brancas.', cam: true, editorial: true, escuro: true, fmt: ['9:16'],
+    mapa: [['k', 0, 0, 9, 4.2], ['j', 0, 4.2, 9, 5.9], ['c', 0, 10.1, 9, 5.9]] },
   livre: { nome: 'Layout livre', desc: 'Camadas soltas: mova, redimensione, duplique.', cam: false, fmt: ['9:16', '1:1', '16:9'], mapa: [['j', 1, 1, 7, 6], ['c', 2, 9, 5, 5]] },
 };
 const FAIXAS = {
@@ -416,7 +420,61 @@ function novoTitulo(estilo = 'branca') {
     faixa: true, altMin: 200, caixa: { w: W, h: 200 }, visivel: true, bordaFaixa: 0, bordaFaixaCor: '#000000', ...estiloFaixa(estilo) };
 }
 /* Recalcula as caixas dos layouts empilhados a partir da divisão webcam/gameplay e da altura da faixa. */
+/* Editorial: cabeçalho (fundo, logo, nome, @, manchete), gameplay, webcam e linha. Cada peça tem um papel; o layout é recalculado sempre. */
+const papel = n => S.p.camadas.find(c => c.papel === n);
+function coresEditorial(escuro) {
+  return escuro ? { fundo: '#000000', texto: '#FFFFFF', arroba: '#AAAAAA' } : { fundo: '#FFFFFF', texto: '#000000', arroba: '#555555' };
+}
+function camadasEditorial(escuro) {
+  const m = S.d.marca || {}, o = S.p.opcoes, k = coresEditorial(escuro);
+  const txt = (id, pap, texto, tamanho, extra = {}) => ({ id, papel: pap, nome: { nome: 'Nome do canal', arroba: '@ do canal', manchete: 'Manchete' }[pap], tipo: 'texto', texto, x: W / 2, y: 200,
+    fonte: 'Arial Black', tamanho, cor: k.texto, contorno: '#000000', espessura: 0, sombra: 0, fundoAtivo: false, fundoCor: k.fundo, fundoAlfa: 1, raio: 0, faixa: false, altMin: 0, quebra: '',
+    bordaFaixa: 0, bordaFaixaCor: '#000000', destaque: o.destaque || '#E10613', alinhar: 'esquerda', largMax: 0, ini: 0, fim: 0, anim: 'nenhuma', caixa: { w: 600, h: 100 }, visivel: true, ...extra });
+  const c = [{ id: 'ed_fundo', papel: 'cab_fundo', nome: 'Cabeçalho', tipo: 'forma', caixa: { x: 0, y: 0, w: W, h: 500 }, cor: k.fundo, alfa: 1, visivel: true },
+    vid('jogo', 'Gameplay', 'gameplay', 0, 500, W, 700, { papel: 'jogo' }), vid('cam', 'Webcam', 'webcam', 0, 1200, W, 720, { papel: 'cam' }),
+    { id: 'ed_linha', papel: 'linha', nome: 'Linha', tipo: 'forma', caixa: { x: 0, y: 1200, w: W, h: 6 }, cor: o.linhaCor || '#FFFFFF', alfa: 1, visivel: true }];
+  if (m.logo) c.push({ id: 'ed_logo', papel: 'logo', nome: 'Logo', tipo: 'imagem', arquivo: m.logo, caixa: { x: 56, y: 150, w: 110, h: 110 }, opacidade: 1, circular: true, visivel: true });
+  c.push(txt('ed_nome', 'nome', m.nome || 'Seu canal', 40, { visivel: !!m.nome }),
+    txt('ed_arroba', 'arroba', `@${(m.arroba || 'seucanal').replace(/^@/, '')}`, 32, { fonte: 'Arial', cor: k.arroba, visivel: !!m.arroba }),
+    txt('ed_manchete', 'manchete', novoTitulo().texto, 62));
+  return c;
+}
+function layoutEditorial() {
+  const o = S.p.opcoes, pad = 56;
+  const fundo = papel('cab_fundo'), logo = papel('logo'), nome = papel('nome'), arroba = papel('arroba'), man = papel('manchete');
+  const jogo = papel('jogo'), cam = papel('cam'), linha = papel('linha');
+  let y = 0;
+  if (fundo && fundo.visivel) {
+    let yy = o.margemTopo ?? 150;
+    const ls = o.logoTam || 110, temLogo = !!(logo && logo.visivel), nomes = [nome, arroba].filter(t => t && t.visivel && t.texto.trim());
+    const tx = temLogo ? pad + ls + 22 : pad;
+    if (temLogo) logo.caixa = { x: pad, y: yy, w: ls, h: ls };
+    const blocoNomes = nomes.reduce((s, t) => s + t.tamanho * 1.15, 0);
+    let ty = yy + (temLogo ? Math.max(0, (ls - blocoNomes) / 2) : 0);
+    for (const t of nomes) { t.largMax = W - tx - pad; medirTitulo(t); t.x = tx - 36 + Math.floor(t.caixa.w / 2); t.y = Math.round(ty + t.tamanho * 1.15 / 2); ty += t.tamanho * 1.15; }
+    if (temLogo || nomes.length) yy += Math.max(temLogo ? ls : 0, blocoNomes) + 26;
+    if (man && man.visivel && man.texto.trim()) {
+      man.largMax = W - 2 * pad; medirTitulo(man);
+      const alt = man.caixa.h - 32; man.x = pad - 36 + Math.floor(man.caixa.w / 2); man.y = Math.round(yy + alt / 2); yy += alt;
+    }
+    y = Math.round(yy + 36);
+    fundo.caixa = { x: 0, y: 0, w: W, h: y };
+  }
+  const resto = H - y, jv = !!(jogo && jogo.visivel), cv = !!(cam && cam.visivel);
+  let fronteira = null;
+  if (jv && cv) {
+    const hj = par(resto * (o.jogo ?? 0.5)), [a, b] = o.inverter ? [cam, jogo] : [jogo, cam], ha = a === jogo ? hj : resto - hj;
+    a.caixa = { x: 0, y, w: W, h: ha }; b.caixa = { x: 0, y: y + ha, w: W, h: resto - ha }; fronteira = y + ha;
+  } else if (jv || cv) (jv ? jogo : cam).caixa = { x: 0, y, w: W, h: resto };
+  if (linha) {
+    const esp = Math.round(o.linhaEsp ?? 6);
+    linha.cor = o.linhaCor || linha.cor;
+    if (fronteira !== null && esp > 0) { linha.caixa = { x: 0, y: fronteira - Math.floor(esp / 2), w: W, h: esp }; linha.visivel = true; } else linha.visivel = false;
+  }
+  return fronteira ?? Math.round(y + resto * 0.6);
+}
 function reorganizar() {
+  if (PRESETS[S.p.preset] && PRESETS[S.p.preset].editorial) { layoutEditorial(); S.sujo = true; return; }
   const p = S.p, pr = p.preset;
   const cam = p.camadas.find(c => c.id === 'cam' && c.tipo === 'video'), jogo = p.camadas.find(c => c.id === 'jogo' && c.tipo === 'video');
   const faixa = p.camadas.find(c => c.tipo === 'texto' && c.faixa && c.visivel);
@@ -434,6 +492,19 @@ function reorganizar() {
 }
 function aplicarPreset(id) {
   const pr = PRESETS[id], p = S.p;
+  if (pr.editorial) {
+    if (!p.regioes.webcam) { p.regioes.webcam = { x: 0.7, y: 0.03, w: 0.27, h: 0.3 }; destacar('#ed-caixa-fonte'); msgFonte('Arraste o retângulo rosa até a câmera do streamer na fonte original.'); }
+    const mesmo = PRESETS[p.preset] && PRESETS[p.preset].editorial;
+    p.opcoes = { jogo: 0.5, margemTopo: 150, linhaEsp: 6, linhaCor: '#FFFFFF', destaque: '#E10613', inverter: false, ...(mesmo ? p.opcoes : {}) };
+    if (mesmo) { trocarCorEditorial(!!pr.escuro); p.preset = id; }
+    else { p.camadas = [...camadasEditorial(!!pr.escuro), ...p.camadas.filter(c => c.tipo === 'imagem' && !c.papel)]; p.preset = id; }
+    const fronteira = layoutEditorial();
+    Object.assign(p.legenda, { x: W / 2, y: fronteira });
+    S.sel = null; S.sujo = true;
+    pintarRegioes(); pintarPresets(); pintarPainel(); pintarSelecao(); mudou(false);
+    if (!(S.d.marca || {}).logo && !(S.d.marca || {}).nome) avisar('Configure a sua marca (logo, nome e @) na aba Templates, em “Sua marca”.');
+    return;
+  }
   if (id === 'livre') {
     p.preset = 'livre';
     S.sel = (p.camadas.find(c => c.tipo === 'video') || {}).id || null;
@@ -491,6 +562,14 @@ function definirFormato(f, aplicar = true) {
   else if (p.preset !== 'livre') { p.preset = 'livre'; avisar('Este template não existe neste formato: as camadas foram reescaladas em Layout livre.'); }
   ajustarLayout(); pintarPresets(); pintarPainel(); pintarSelecao(); mudou(false);
 }
+function trocarCorEditorial(escuro) {
+  const k = coresEditorial(escuro);
+  for (const c of S.p.camadas) {
+    if (c.papel === 'cab_fundo') c.cor = k.fundo;
+    if (['nome', 'manchete'].includes(c.papel)) c.cor = k.texto;
+    if (c.papel === 'arroba') c.cor = k.arroba;
+  }
+}
 function aplicarLayoutSalvo(l) {
   const p = S.p;
   p.camadas = JSON.parse(JSON.stringify(l.camadas));
@@ -528,7 +607,7 @@ function pintarPassos(ativo = 0) {
     el('span', { className: 'passo-dica', textContent: PASSOS[ativo][1] }));
 }
 function miniMapa(mapa) {
-  const cores = { j: '#2de2e6', c: '#ff2d95', t: '#ffffff', h: '#ffb347' };
+  const cores = { j: '#2de2e6', c: '#ff2d95', t: '#ffffff', h: '#ffb347', k: '#3a3a4a' };
   const t = document.createElement('template');
   t.innerHTML = `<svg viewBox="0 0 9 16" aria-hidden="true"><rect width="9" height="16" fill="#080919"/>${mapa.map(([k, x, y, l, a]) => `<rect x="${x}" y="${y}" width="${l}" height="${a}" fill="${cores[k]}" fill-opacity=".8" stroke="#080919" stroke-width=".25"/>`).join('')}</svg>`;
   return t.content.firstChild;
@@ -561,6 +640,57 @@ function pintarPresets() {
   const d = $('#ed-divisao'); if (d) d.replaceChildren(...controleDivisao());
   if (S.aba === 'templates' && $('#ed-tpl-aba')) $('#ed-tpl-aba').replaceChildren(...botoesPresets());
 }
+function opcoesEditorial() {
+  const o = S.p.opcoes, re = () => { layoutEditorial(); S.sujo = true; pintarSelecao(); clearTimeout(S.tm5); S.tm5 = setTimeout(() => mudou(false), 300); };
+  const man = papel('manchete');
+  const mostrar = [['cab_fundo', 'Cabeçalho'], ['logo', 'Logo'], ['nome', 'Nome'], ['arroba', '@'], ['manchete', 'Manchete'], ['jogo', 'Gameplay'], ['cam', 'Webcam']]
+    .filter(([n]) => papel(n)).map(([n, t]) => el('label', { className: 'marcar' }, el('input', { type: 'checkbox', checked: papel(n).visivel, onchange: e => { papel(n).visivel = e.target.checked; re(); } }), t));
+  return [el('div', { className: 'sec', textContent: 'Editorial' }),
+    el('div', { className: 'grupo' },
+      el('label', { className: 'todo' }, 'Manchete (*palavra* fica na cor de destaque; Enter quebra a linha)', el('textarea', { rows: 3, value: man ? man.texto : '', oninput: e => { if (man) { man.texto = e.target.value; re(); } } })),
+      campoCor('Cor do destaque', o, 'destaque', () => { if (man) man.destaque = o.destaque; re(); }),
+      campoNum('Tamanho da manchete', man || {}, 'tamanho', { min: 30, max: 120, efeito: re }),
+      campoCheck('Webcam no meio, gameplay embaixo', o, 'inverter', re),
+      campoFaixa(`Espaço do gameplay: ${Math.round((o.jogo ?? 0.5) * 100)}%`, o, 'jogo', 0.25, 0.75, 0.01, re),
+      campoFaixa(`Margem de cima (área segura): ${o.margemTopo ?? 150} px`, o, 'margemTopo', 0, 400, 2, re),
+      campoNum('Linha entre os vídeos (px)', o, 'linhaEsp', { min: 0, max: 20, efeito: re }), campoCor('Cor da linha', o, 'linhaCor', re),
+      el('div', { className: 'ferramentas todo', style: 'margin:0' },
+        el('button', { className: 'btn leve mini', type: 'button', textContent: S.p.preset === 'editorial_preto' ? 'Cabeçalho branco' : 'Cabeçalho preto', onclick: () => aplicarPreset(S.p.preset === 'editorial_preto' ? 'editorial_branco' : 'editorial_preto') }))),
+    el('div', { className: 'sec', style: 'border:0;padding:0', textContent: 'Mostrar' }), el('div', { className: 'ferramentas', style: 'margin:0;gap:10px' }, ...mostrar),
+    el('p', { className: 'dica', style: 'margin:0', textContent: 'O que você esconder sai do layout sem deixar espaço vazio.' })];
+}
+/* Marca: logo, nome e @ usados nos templates. Nada é preenchido por padrão. */
+function secaoMarca() {
+  const m = S.d.marca || { nome: '', arroba: '', logo: '' };
+  const nome = el('input', { value: m.nome, placeholder: 'Nome do canal', maxLength: 40, autocomplete: 'off' }), arroba = el('input', { value: m.arroba, placeholder: '@seucanal', maxLength: 40, autocomplete: 'off' });
+  const foto = m.logo ? el('img', { className: 'marca-logo', src: `/grafico/${m.logo}`, alt: '' }) : el('span', { className: 'marca-logo vazio', textContent: 'sem logo' });
+  const salvar = tentar(async (logo = m.logo) => {
+    S.d.marca = await api('/api/marca', { nome: nome.value, arroba: arroba.value.replace(/^@/, ''), logo });
+    if (PRESETS[S.p.preset] && PRESETS[S.p.preset].editorial) {  // atualiza o cabeçalho que está na tela
+      const k = S.d.marca, n = papel('nome'), a = papel('arroba');
+      if (n) { n.texto = k.nome || n.texto; n.visivel = !!k.nome; }
+      if (a) { a.texto = `@${(k.arroba || 'seucanal').replace(/^@/, '')}`; a.visivel = !!k.arroba; }
+      if (k.logo) { const l = papel('logo'); if (l) { l.arquivo = k.logo; l.visivel = true; } else S.p.camadas.push({ id: 'ed_logo', papel: 'logo', nome: 'Logo', tipo: 'imagem', arquivo: k.logo, caixa: { x: 56, y: 150, w: 110, h: 110 }, opacidade: 1, circular: true, visivel: true }); }
+      layoutEditorial(); mudou(false);
+    }
+    avisar('Marca salva.'); pintarPainel();
+  });
+  const enviar = () => {
+    const entrada = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp' });
+    entrada.onchange = tentar(async () => {
+      const arq = entrada.files[0]; if (!arq) return;
+      const dados = await new Promise((ok, falha) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = falha; r.readAsDataURL(arq); });
+      const g = await api('/api/grafico', { dados }); await salvar(g.arquivo);
+    });
+    entrada.click();
+  };
+  return [el('div', { className: 'sec', textContent: 'Sua marca' }),
+    el('div', { className: 'marca-linha' }, foto, el('div', { className: 'grupo', style: 'flex:1' }, el('label', {}, 'Nome', nome), el('label', {}, '@', arroba))),
+    el('div', { className: 'ferramentas', style: 'margin:0' },
+      el('button', { className: 'btn leve mini', type: 'button', textContent: m.logo ? 'Trocar logo (PNG)' : 'Enviar logo (PNG)', onclick: enviar }),
+      el('button', { className: 'btn mini', type: 'button', textContent: 'Salvar marca', onclick: () => salvar() })),
+    el('p', { className: 'dica', style: 'margin:0', textContent: 'A logo aparece redonda nos templates editoriais. Sem marca, o cabeçalho mostra só a manchete.' })];
+}
 /* Aba Templates no painel da direita: sempre à mão, sem rolar a coluna da fonte. */
 function abaTemplates() {
   S._livre = false;
@@ -573,6 +703,8 @@ function abaTemplates() {
     el('div', { id: 'ed-tpl-aba', className: 'presets presets-aba' }, ...botoesPresets()),
     el('p', { className: 'dica', style: 'margin:0', textContent: `Formato atual: ${S.p.formato}. Templates apagados são de outro formato: ao clicar, o formato muda junto.` }),
     el('div', { className: 'grupo' }, ...controleDivisao()),
+    ...(PRESETS[S.p.preset] && PRESETS[S.p.preset].editorial ? opcoesEditorial() : []),
+    ...secaoMarca(),
     el('div', { className: 'ferramentas', style: 'margin:0' },
       el('button', { className: 'btn leve mini', type: 'button', textContent: 'Ver todos com descrição', onclick: () => escolherTemplate(S.p.preset) }),
       el('button', { className: 'btn leve mini', type: 'button', textContent: 'Salvar para este streamer', onclick: salvarLayoutStreamer })),
@@ -777,7 +909,7 @@ function abaCamadas() {
     const trocar = d => ev => { ev.stopPropagation(); const j = i + d; if (j >= 0 && j < p.camadas.length) { [p.camadas[i], p.camadas[j]] = [p.camadas[j], p.camadas[i]]; pintarPainel(); mudou(); } };
     const tipo = { video: c.regiao === 'webcam' ? 'Webcam' : c.regiao === 'propria' ? 'Recorte' : c.regiao === 'chat' ? 'Chat' : 'Gameplay', texto: 'Título', imagem: 'Imagem', chat: 'Chat' }[c.tipo];
     return el('div', { className: 'camada', role: 'option', ariaSelected: String(S.sel === c.id), onclick: () => selecionar(c.id) },
-      el('button', { className: 'ico', type: 'button', title: c.visivel ? 'Ocultar' : 'Mostrar', textContent: c.visivel ? '●' : '○', onclick: ev => { ev.stopPropagation(); c.visivel = !c.visivel; if (c.tipo === 'texto') reorganizar(); pintarPainel(); mudou(false); } }),
+      el('button', { className: 'ico', type: 'button', title: c.visivel ? 'Ocultar' : 'Mostrar', textContent: c.visivel ? '●' : '○', onclick: ev => { ev.stopPropagation(); c.visivel = !c.visivel; reorganizar(); pintarPainel(); mudou(false); } }),
       el('span', { className: 'tipo-camada', textContent: tipo }),
       el('span', { className: 'nome', textContent: c.tipo === 'texto' ? (c.texto.split('\n')[0] || 'Título') : (c.nome || tipo) }),
       el('button', { className: 'ico', type: 'button', title: 'Para frente', textContent: '↑', onclick: trocar(1) }), el('button', { className: 'ico', type: 'button', title: 'Para trás', textContent: '↓', onclick: trocar(-1) }),
