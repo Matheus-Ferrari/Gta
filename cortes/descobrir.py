@@ -20,7 +20,7 @@ import uuid
 from datetime import datetime, timezone
 
 from . import canais as canais_mod
-from .ao_vivo import analisador
+from .ao_vivo import analisador, captura
 from .canais import ErroApi, canais
 from .config import DADOS, gravar_json, ler_json
 from .tarefas import fila
@@ -935,7 +935,7 @@ GET: dict = {caminho: _rota(f) for caminho, f in {
     "/api/descobrir/categorias/buscar": descobrir.buscar_categorias,
     "/api/descobrir/criadores": descobrir.criadores_listar,
     "/api/descobrir/monitor": descobrir.monitor_listar,
-    "/api/descobrir/analise": lambda _: analisador.estado(),
+    "/api/descobrir/analise": lambda _: {**analisador.estado(), "captura": captura.estado()},
     "/api/descobrir/sugestoes": sugestoes,
 }.items()}
 
@@ -956,4 +956,6 @@ POST: dict = {caminho: _rota(f) for caminho, f in {
     "/api/descobrir/analise/parar": lambda _: analisador.parar(),
     "/api/descobrir/analise/corte": lambda d: analisador.criar_corte(d, fila),
     "/api/descobrir/sugestoes/editar": sugestao_editar,
+    "/api/descobrir/aovivo/iniciar": captura.iniciar,
+    "/api/descobrir/aovivo/parar": lambda _: captura.parar(),
 }.items()}

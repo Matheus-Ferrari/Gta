@@ -107,3 +107,8 @@
 .dc-foco { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; color: #fff; font-weight: 600; }
 .dc-quem { justify-self: start; padding: 2px 8px; border-radius: 6px; background: rgba(45, 226, 230, .12); color: var(--ciano); font-size: 12px; font-weight: 700; }
 .dc-quem.proprio { background: rgba(255, 45, 149, .16); color: var(--rosa2); }
+
+.dc-captura { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; padding: 10px 12px; border: 1px solid var(--linha2); border-radius: 10px; }
+.dc-captura.on { border-color: var(--ok); }
+.dc-captura.on b::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 7px; border-radius: 50%; background: #ff3b5c; animation: pulso 1.2s infinite; }
+.dc-captura span { color: var(--suave); }

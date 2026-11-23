@@ -9,6 +9,8 @@ Editor local de cortes de lives. Encontra os melhores momentos, monta o layout v
 3. Dê dois cliques em `instalar.cmd`. Ele cria o ambiente, instala os pacotes e baixa o ffmpeg 8.0.1 e o TwitchDownloader. Demora na primeira vez.
 4. Abra com `abrir_painel.cmd`. Em **Configurações → Twitch**, informe um Client ID (crie grátis em dev.twitch.tv/console, tipo *Public*) e conecte a sua conta.
 
+**Atualizar:** feche a janela preta do painel e dê dois cliques em `atualizar.cmd`. Ele baixa só o código novo do GitHub (ou faz `git pull`, se a pasta veio do git) e não reinstala nada. Depois abra o `abrir_painel.cmd` de novo.
+
 Vídeos e configurações ficam em `D:\Cortes` quando existe o disco D:, senão em `ViceClips` na pasta do usuário (a variável `CORTES_DADOS` escolhe outra). Placa NVIDIA deixa a legenda e a exportação bem mais rápidas, mas não é obrigatória.
 
 O app roda só no PC de quem instalou: não é um site (o GitHub Pages não executa Python, ffmpeg nem a placa de vídeo).

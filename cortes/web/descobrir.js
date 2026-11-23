@@ -209,8 +209,30 @@
         el('div', { className: 'ctrl' }, link('Abrir live', l.link, 'btn mini'),
           l.favorito ? botao('Nos favoritos', () => { D.aba = 'favoritos'; desenhar(); }, 'btn leve mini', { title: 'Ver na aba Favoritos' })
             : botao('Favoritar', acao(async () => { const r = await api('/api/descobrir/favoritar', { user_id: l.user_id }); avisar(r.novo ? `${l.nome} entrou nos favoritos (${r.criador.nome}).` : 'Já estava nos favoritos.'); recarregar(); })),
+          botao('Analisar ao vivo', () => analisarAoVivo(l.login, l.nome, l.inicio), 'btn mini', { title: 'Grava esta live a partir de agora e sugere os melhores momentos enquanto ela acontece' }),
           l.monitorado ? botao('Monitorando', () => { D.aba = 'monitor'; desenhar(); }, 'btn leve mini', { title: 'Ver na aba Monitoramento' })
             : botao('Monitorar', acao(async () => { await api('/api/descobrir/monitor/adicionar', { user_id: l.user_id }); avisar(`Monitorando ${l.nome}: os clipes novos desta live vão para a fila de revisão.`); recarregar(); })))));
+  }
+
+  /* ---------- analisar ao vivo: grava a live e liga a análise em janelas ---------- */
+  function analisarAoVivo(login, nome, inicio) {
+    const d = el('dialog', { className: 'tpl-dlg', style: 'width:min(520px,calc(100vw - 32px))' });
+    const qual = el('select', {}, el('option', { value: '720', textContent: '720p (recomendado, ~1,5 GB por hora)', selected: true }), el('option', { value: '1080', textContent: '1080p (melhor para Reels, ~3 GB por hora)' }), el('option', { value: '480', textContent: '480p (leve, ~0,8 GB por hora)' }));
+    const transc = el('input', { type: 'checkbox' }), aut = el('input', { type: 'checkbox' });
+    d.append(el('div', { style: 'padding:18px;display:grid;gap:12px' },
+      el('h2', { className: 'tit', style: 'margin:0', textContent: `Analisar a live de ${nome}` }),
+      el('p', { className: 'dica', style: 'margin:0', textContent: 'O Vice Clips grava a live daqui para a frente (não pega o que já passou) e, a cada 25 s, procura picos de voz, gritos, risadas e mudanças de cena. Os melhores momentos aparecem em Monitoramento com nota e botão Criar corte, que corta direto da gravação.' }),
+      el('label', {}, 'Qualidade da gravação', qual),
+      el('label', { className: 'marcar' }, transc, 'Transcrever os momentos (mostra a fala; usa a placa de vídeo)'),
+      el('label', { className: 'marcar autoriza' }, aut, 'Tenho autorização para gravar e cortar esta live (meu canal, permissão do criador ou conteúdo liberado para cortes).'),
+      el('div', { className: 'ferramentas', style: 'margin:0' },
+        botao('Começar', acao(async () => {
+          await api('/api/descobrir/aovivo/iniciar', { login, qualidade: qual.value, transcrever: transc.checked, autorizado: aut.checked, inicio_live: inicio || '' });
+          d.close(); avisar(`Gravando a live de ${nome}. As sugestões aparecem em Monitoramento.`); D.aba = 'monitor'; desenhar();
+        }), 'btn mini'),
+        botao('Cancelar', () => d.close()))));
+    d.addEventListener('close', () => d.remove());
+    document.body.append(d); d.showModal();
   }
 
   /* ---------- clipes: cartão e importação ---------- */
@@ -521,7 +543,7 @@
         explica('Importar', 'Importar (oficial) usa GET /clips/downloads: só o dono do canal e os editores dele recebem o arquivo. Sem permissão, o clipe fica como Só link.')),
       info, lives,
       el('h2', { className: 'tit', style: 'margin-top:20px', textContent: 'Fila de revisão' }), chips, fila,
-      el('h2', { className: 'tit', style: 'margin-top:20px', textContent: 'Análise do seu arquivo de gravação (preparação)' }), analise);
+      el('h2', { className: 'tit', style: 'margin-top:20px', textContent: 'Análise ao vivo e de gravações' }), analise);
     function cartaoMonitor(m) {
       const st = m.status || {};
       return el('article', { className: 'card canal' },
@@ -534,6 +556,7 @@
           el('small', { className: 'dc-meta', textContent: [st.visto && `status às ${hora(st.visto)}`, st.online && m.ultimo_clips && `clipes conferidos às ${hora(m.ultimo_clips)}`,
             st.online && m.clips_live !== undefined && `${m.clips_live} ${m.clips_live === 1 ? 'clipe' : 'clipes'} nesta live`, m.erro].filter(Boolean).join(' · ') || 'A primeira conferência acontece em instantes.' }),
           el('div', { className: 'ctrl' }, link(st.online ? 'Abrir live' : 'Abrir canal', `https://www.twitch.tv/${m.login}`, 'btn mini'),
+            st.online ? botao('Analisar ao vivo', () => analisarAoVivo(m.login, m.nome, st.inicio), 'btn mini') : null,
             botao('Ver clipes', () => { Object.assign(D.clips, { origem: 'canal', canal: m.user_id, nome: m.nome }); D.aba = 'clips'; desenhar(); }),
             botao('Parar de monitorar', acao(async () => { await api('/api/descobrir/monitor/remover', { user_id: m.user_id }); D.ultimoMonitor = ''; await carregar(); }), 'btn leve mini perigo'))));
     }
@@ -601,7 +624,13 @@
       ultimo = e;
       if (!e || !e.estado) { status.replaceChildren(el('p', { className: 'dica', style: 'margin:0', textContent: 'Nenhuma análise feita ainda.' })); return; }
       const sug = [...(e.sugestoes || [])].map((s, i) => ({ s, i })).sort((a, b) => b.s.nota - a.s.nota);
+      const cap = e.captura || {};
+      const NOMES_CAP = { conectando: 'Conectando à live...', gravando: 'Gravando e analisando', encerrada: 'A live acabou ou caiu', parada: 'Gravação parada', erro: 'Erro' };
       status.replaceChildren(
+        cap.login ? el('div', { className: 'dc-captura' + (cap.rodando ? ' on' : '') },
+          el('b', { textContent: `${NOMES_CAP[cap.estado] || cap.estado} · ${cap.login}` }),
+          el('span', { textContent: cap.erro || `${cap.qualidade} · ${cap.mb} MB · ${cap.minutos} min gravados` }),
+          cap.rodando ? botao('Parar de gravar', acao(async () => { await api('/api/descobrir/aovivo/parar', {}); atualizar(); }), 'btn leve mini perigo') : null) : null,
         el('p', { className: e.estado === 'erro' ? 'dica erro' : 'dica', style: 'margin:0' }, el('b', { textContent: `${NOMES[e.estado] || e.estado}: ` }),
           `${e.mensagem || ''} · ${e.arquivo ? e.arquivo.split(/[\\/]/).pop() : ''} · analisado até ${relogio(e.processado || 0)} · ${e.janelas || 0} janelas de ${e.janela || '?'} s${(e.cenas || []).length ? ` · ${e.cenas.length} mudanças de cena` : ''}`),
         sug.length ? el('div', { className: 'lista', style: 'margin-top:10px' }, ...sug.slice(0, 30).map(({ s, i }) => {
@@ -616,7 +645,7 @@
         const e = await api('/api/descobrir/analise');
         if (!ativa(g)) return;
         desenharStatus(e);
-        if (e.rodando || e.estado === 'iniciando') agendar(atualizar, 3000);
+        if (e.rodando || e.estado === 'iniciando' || (e.captura && e.captura.rodando)) agendar(atualizar, 3000);
       } catch (e) { if (ativa(g)) status.replaceChildren(el('p', { className: 'dica erro', textContent: e.message })); }
     }
     atualizar();

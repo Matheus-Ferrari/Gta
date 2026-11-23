@@ -15,6 +15,7 @@ usuário pede, reaproveitando vods.criar_corte com tipo "arquivo".
 from __future__ import annotations
 
 import argparse
+import re
 import ctypes
 import json
 import os
@@ -421,6 +422,85 @@ class Analisador:
 
 
 analisador = Analisador()
+
+
+class Captura:
+    """Grava a live da Twitch (do ponto atual em diante) num arquivo que cresce, e liga a análise em janelas nele.
+    Só com autorização confirmada; o vídeo fica no PC e os cortes saem direto desse arquivo."""
+
+    def __init__(self) -> None:
+        self.trava = threading.Lock()
+        self.proc: subprocess.Popen | None = None
+        self.info: dict = {}
+
+    def rodando(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
+
+    def iniciar(self, d: dict) -> dict:
+        from .fontes import YTDLP
+        if not d.get("autorizado"):
+            raise ValueError("Confirme que você tem autorização para gravar e cortar esta live.")
+        login = re.sub(r"^https?://(www\.)?twitch\.tv/", "", str(d.get("login") or "").strip().lower()).strip("/@ ").split("/")[0]
+        if not re.fullmatch(r"[a-z0-9_]{3,25}", login):
+            raise ValueError("Canal da Twitch inválido.")
+        altura = {"480": 480, "720": 720, "1080": 1080}.get(str(d.get("qualidade") or "720"), 720)
+        with self.trava:
+            if self.rodando():
+                raise ValueError(f"Já estou gravando a live de {self.info.get('login')}. Pare antes de começar outra.")
+            if analisador.rodando():
+                analisador.parar()
+            pasta = DADOS / "ao_vivo"
+            pasta.mkdir(parents=True, exist_ok=True)
+            arquivo = pasta / f"{login}_{time.strftime('%Y-%m-%d_%H%M')}.ts"
+            log = (pasta / "captura.log").open("w", encoding="utf-8")
+            self.proc = subprocess.Popen([*YTDLP, "-f", f"best[height<={altura}]/best", "--hls-use-mpegts", "--no-part", "-o", str(arquivo),
+                                          f"https://www.twitch.tv/{login}"], cwd=BASE, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                                         creationflags=PRIORIDADE)
+            self.info = {"login": login, "arquivo": str(arquivo), "comecou": time.time(), "qualidade": f"{altura}p", "erro": "",
+                         "inicio_live": str(d.get("inicio_live") or ""), "estado": "conectando"}
+        threading.Thread(target=self._ligar_analise, args=(arquivo, bool(d.get("transcrever"))), daemon=True).start()
+        return self.estado()
+
+    def _ligar_analise(self, arquivo: Path, transcrever: bool) -> None:
+        """Espera o arquivo ter alguns segundos de live e começa a análise acompanhando o crescimento."""
+        for _ in range(180):
+            if not self.rodando():
+                break
+            if arquivo.is_file() and arquivo.stat().st_size > 3_000_000:
+                try:
+                    analisador.iniciar({"caminho": str(arquivo), "autorizado": True, "janela": 25, "visual": "leve", "seguir": True, "transcrever": transcrever})
+                    self.info["estado"] = "gravando"
+                except ValueError as e:
+                    self.info.update(estado="erro", erro=str(e))
+                return
+            time.sleep(1)
+        try:
+            fim = [l for l in (DADOS / "ao_vivo" / "captura.log").read_text(encoding="utf-8", errors="replace").splitlines() if "ERROR" in l][-1:]
+        except OSError:
+            fim = []
+        motivo = fim[0].split("ERROR:", 1)[-1].strip()[:200] if fim else "a live não começou a chegar"
+        self.info.update(estado="erro", erro=f"Não consegui gravar a live: {motivo}. Ela pode ter acabado, ser só para inscritos ou ter restrição de região.")
+        self.parar(manter_erro=True)
+
+    def parar(self, manter_erro: bool = False) -> dict:
+        with self.trava:
+            if self.rodando():
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(self.proc.pid)], capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if self.info and not manter_erro:
+                self.info.update(estado="parada", terminou=time.time())
+        return self.estado()  # a análise percebe que o arquivo parou de crescer e termina sozinha em 2 min
+
+    def estado(self) -> dict:
+        if not self.info:
+            return {}
+        arq = Path(self.info["arquivo"])
+        tam = arq.stat().st_size if arq.is_file() else 0
+        if self.info.get("estado") in ("conectando", "gravando") and not self.rodando():
+            self.info["estado"] = "encerrada"  # a live acabou ou caiu
+        return {**self.info, "rodando": self.rodando(), "mb": round(tam / 1048576), "minutos": round((time.time() - self.info["comecou"]) / 60, 1)}
+
+
+captura = Captura()
 
 
 def main() -> None:
