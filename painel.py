@@ -502,7 +502,6 @@ ROTAS = {
     "/api/twitch/desconectar": lambda _: (canais.desconectar_twitch(), {"ok": True})[1],
     "/api/twitch/clip": lambda d: canais.criar_clip(str(d.get("login", "")), int(d.get("duracao") or 30), str(d.get("titulo") or "")),
     "/api/twitch/importar-clip": _importar_clip,
-    "/api/twitch/chat": lambda d: (canais.vigiar_chat(str(d.get("login", "")), bool(d.get("ativo"))), {"ok": True})[1],
     "/api/canais/adicionar": _canal,
     "/api/vod/abrir": lambda d: vods.abrir_link(str(d.get("url", ""))),
     "/api/vod/corte": _corte_vod,

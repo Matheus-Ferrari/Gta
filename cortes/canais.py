@@ -1,7 +1,13 @@
-"""Lives ao vivo pelas APIs oficiais: status na Twitch e na Kick, clips e sugestões vindas do chat da Twitch."""
+"""Lives ao vivo pelas APIs oficiais: status na Twitch e na Kick, clips, ranking dos canais ao vivo e avisos.
+
+Ranking (nota de 0 a 100 entre os seus canais ao vivo): audiência, crescimento da audiência em ~10 min, mensagens por
+minuto no chat e clipes criados nos últimos 30 min. Chat e clipes só existem na Twitch: a API oficial da Kick não entrega
+nenhum dos dois, então a nota de um canal da Kick usa só audiência e crescimento (os pesos se redistribuem).
+"""
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import socket
@@ -12,6 +18,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter, deque
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import DADOS, LIVES, gravar_json, ler_json, pasta_da_live
@@ -26,6 +33,12 @@ KICK_API = os.environ.get("VC_KICK_API", "https://api.kick.com/public/v1")
 ESCOPOS = "clips:edit chat:read editor:manage:clips"
 INTERVALO = 45
 PRAZO_CLIP = 60
+JANELA_HIST = 1800  # amostras de audiência guardadas (30 min)
+CRESC_MIN = 480  # crescimento comparado com a amostra mais recente que tenha pelo menos 8 min (~10 min, com o ciclo de 45 s)
+CLIPS_CADA, CLIPS_JANELA, CLIPS_RAJADA = 120, 1800, 600  # clipes da Twitch: contados a cada 2 min, dos últimos 30 min; rajada = últimos 10 min
+PESOS = {"audiencia": 35, "crescimento": 20, "chat": 25, "clipes": 20}
+RECARGA_AVISO = {"online": 0, "chat": 120, "clipes": 900, "subindo": 1200}  # o mesmo aviso para o mesmo canal no máximo a cada N s
+SUBIU = 0.25  # aviso de audiência subindo: +25% em ~10 min
 
 
 LIMITE: dict = {}  # últimos cabeçalhos Ratelimit-* da Helix: pontos restantes e quando o balde enche (epoch em segundos)
@@ -95,6 +108,35 @@ class DetectorChat:
         return {"motivo": motivo + (f", “{top[:18]}” repetido {vezes}x" if vezes >= 5 else ""), "ritmo": round(ritmo, 1)}
 
 
+class Ritmo:
+    """Mensagens do chat em baldes de 1 s: mede msgs/min sem guardar cada mensagem."""
+
+    def __init__(self) -> None:
+        self.baldes: deque[list] = deque()
+        self.desde = time.time()
+
+    def registrar(self, t: float) -> None:
+        s = int(t)
+        if self.baldes and self.baldes[-1][0] == s:
+            self.baldes[-1][1] += 1
+            return
+        self.baldes.append([s, 1])
+        while self.baldes[0][0] < s - 120:
+            self.baldes.popleft()
+
+    def por_minuto(self, agora: float) -> int | None:
+        if agora - self.desde < 60:  # ainda não tem um minuto inteiro medido
+            return None
+        return sum(n for s, n in list(self.baldes) if s > agora - 60)
+
+
+def _ts(texto: str) -> float:
+    try:
+        return datetime.fromisoformat(str(texto).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
 class Canais:
     def __init__(self) -> None:
         self.trava = threading.RLock()
@@ -104,7 +146,12 @@ class Canais:
         self.cfg.setdefault("canais", [])
         self.cfg.setdefault("clips", [])
         self.estado: dict[str, dict] = {}
-        self.sugestoes: deque[dict] = deque(maxlen=20)
+        self.avisos: deque[dict] = deque(maxlen=40)
+        self.ultimo_aviso: dict[tuple, float] = {}
+        self.historico: dict[str, deque] = {}  # "plataforma:login" -> (quando, espectadores) enquanto está ao vivo
+        self.ritmos: dict[str, Ritmo] = {}  # login da Twitch -> mensagens do chat
+        self.clips_vivo: dict[str, dict] = {}  # login da Twitch -> clipes dos últimos 30 min
+        self.ultimo_clips = 0.0
         self.login_tw: dict = {}
         self.chats: dict[str, threading.Event] = {}
         self.iniciado = False
@@ -228,7 +275,7 @@ class Canais:
             raise ValueError("Nome de canal inválido.")
         with self.trava:
             if not any(c["plataforma"] == plataforma and c["login"] == login for c in self.cfg["canais"]):
-                self.cfg["canais"].append({"plataforma": plataforma, "login": login, "chat": False})
+                self.cfg["canais"].append({"plataforma": plataforma, "login": login})
                 self._salvar()
         threading.Thread(target=self.atualizar, daemon=True).start()
 
@@ -237,13 +284,45 @@ class Canais:
             self.cfg["canais"] = [c for c in self.cfg["canais"] if not (c["plataforma"] == plataforma and c["login"] == login)]
             self._salvar()
         self.estado.pop(f"{plataforma}:{login}", None)
+        self.historico.pop(f"{plataforma}:{login}", None)
 
-    def vigiar_chat(self, login: str, ativo: bool) -> None:
-        with self.trava:
-            for c in self.cfg["canais"]:
-                if c["plataforma"] == "twitch" and c["login"] == login:
-                    c["chat"] = bool(ativo)
-            self._salvar()
+    # ------------------------------------------------------ status, histórico de audiência e avisos
+
+    def _avisar(self, tipo: str, plataforma: str, login: str, texto: str) -> None:
+        agora = time.time()
+        chave = (tipo, plataforma, login)
+        if agora - self.ultimo_aviso.get(chave, 0) < RECARGA_AVISO.get(tipo, 600):
+            return
+        self.ultimo_aviso[chave] = agora
+        self.avisos.append({"tipo": tipo, "plataforma": plataforma, "login": login, "quando": agora, "texto": texto})
+
+    def _gravar_estado(self, plataforma: str, login: str, novo: dict) -> None:
+        """Guarda o status, a amostra de audiência e avisa quando um canal que estava fora do ar entra ao vivo."""
+        chave = f"{plataforma}:{login}"
+        antes = self.estado.get(chave) or {}
+        self.estado[chave] = novo
+        if not novo.get("online"):
+            self.historico.pop(chave, None)
+            return
+        agora = time.time()
+        h = self.historico.setdefault(chave, deque())
+        h.append((agora, int(novo.get("espectadores") or 0)))
+        while h[0][0] < agora - JANELA_HIST:
+            h.popleft()
+        if antes.get("online") is False:  # só a virada fora do ar -> ao vivo; ao abrir o painel não avisa quem já estava ao vivo
+            self._avisar("online", plataforma, login, "entrou ao vivo" + (f" · {novo['jogo']}" if novo.get("jogo") else ""))
+
+    def _crescimento(self, chave: str) -> tuple[float, int, int] | None:
+        """Variação da audiência em ~10 min: (fração, antes, agora). None enquanto não há amostra antiga o bastante."""
+        h = list(self.historico.get(chave) or ())
+        if len(h) < 2:
+            return None
+        t2, v2 = h[-1]
+        base = [(t, v) for t, v in h if t2 - t >= CRESC_MIN]
+        if not base:
+            return None
+        v1 = base[-1][1]
+        return (v2 - v1) / max(v1, 1), v1, v2
 
     def _status_twitch(self, logins: list[str]) -> None:
         if not logins:
@@ -259,10 +338,10 @@ class Canais:
                 online[s["user_login"].lower()] = s
         for l in logins:
             s = online.get(l)
-            self.estado[f"twitch:{l}"] = {"online": False} if not s else {
+            self._gravar_estado("twitch", l, {"online": False} if not s else {
                 "online": True, "titulo": s.get("title", ""), "jogo": s.get("game_name", ""), "espectadores": s.get("viewer_count", 0),
                 "inicio": s.get("started_at", ""), "id_canal": s.get("user_id"), "nome": s.get("user_name", l),
-                "thumb": s.get("thumbnail_url", "").replace("{width}", "480").replace("{height}", "270")}
+                "thumb": s.get("thumbnail_url", "").replace("{width}", "480").replace("{height}", "270")})
 
     def _token_kick(self, renovar: bool = False) -> str:
         """O token de aplicativo não tem refresh: quando vence, pede outro com as mesmas credenciais."""
@@ -321,8 +400,8 @@ class Canais:
             if c is None:
                 self.estado[f"kick:{l}"] = {"online": None, "erro": "Canal não encontrado na Kick."}
             else:
-                self.estado[f"kick:{l}"] = {"online": bool(s.get("is_live")), "titulo": c.get("stream_title", ""), "jogo": (c.get("category") or {}).get("name", ""),
-                                            "espectadores": s.get("viewer_count", 0), "inicio": s.get("start_time", ""), "thumb": s.get("thumbnail", "")}
+                self._gravar_estado("kick", l, {"online": bool(s.get("is_live")), "titulo": c.get("stream_title", ""), "jogo": (c.get("category") or {}).get("name", ""),
+                                                "espectadores": s.get("viewer_count", 0), "inicio": s.get("start_time", ""), "thumb": s.get("thumbnail", "")})
 
     def atualizar(self) -> None:
         canais = list(self.cfg["canais"])
@@ -333,8 +412,38 @@ class Canais:
             except (ErroApi, KeyError) as e:
                 for l in logins:
                     self.estado[f"{plataforma}:{l}"] = {"online": None, "erro": str(e)}
+        for c in canais:
+            chave = f"{c['plataforma']}:{c['login']}"
+            g = self._crescimento(chave) if self.estado.get(chave, {}).get("online") else None
+            if g and g[0] >= SUBIU and g[2] >= 100:
+                self._avisar("subindo", c["plataforma"], c["login"], f"audiência subiu {g[0]:.0%} em ~10 min ({g[1]} → {g[2]})")
         self._ajustar_chats()
+        self._contar_clips()
         self._conferir_clips()
+
+    def _contar_clips(self) -> None:
+        """Clipes que o público criou nos últimos 30 min de cada canal da Twitch ao vivo (a Kick não tem clipes na API oficial)."""
+        agora = time.time()
+        if agora - self.ultimo_clips < CLIPS_CADA or not self.cfg["twitch"].get("access_token"):
+            return
+        self.ultimo_clips = agora
+        for c in list(self.cfg["canais"]):
+            if c["plataforma"] != "twitch":
+                continue
+            info = self.estado.get(f"twitch:{c['login']}", {})
+            if not info.get("online") or not info.get("id_canal"):
+                self.clips_vivo.pop(c["login"], None)
+                continue
+            desde = max(agora - CLIPS_JANELA, _ts(info.get("inicio", "")))  # só clipes desta live
+            try:
+                dados = self._helix("GET", "/clips", [("broadcaster_id", info["id_canal"]), ("first", "100"),
+                                                      ("started_at", datetime.fromtimestamp(desde, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))]).get("data") or []
+            except ErroApi:
+                continue
+            rajada = sum(1 for d in dados if _ts(d.get("created_at", "")) >= agora - CLIPS_RAJADA)
+            self.clips_vivo[c["login"]] = {"total": len(dados), "views": sum(int(d.get("view_count") or 0) for d in dados), "rajada": rajada, "visto": agora}
+            if rajada >= 3:
+                self._avisar("clipes", "twitch", c["login"], f"{rajada} clipes criados nos últimos 10 min")
 
     def _laco(self) -> None:
         while True:
@@ -344,25 +453,59 @@ class Canais:
                 if any(c.get("estado") == "processando" for c in self.cfg["clips"]) and _ % 5 == 4:
                     self._conferir_clips()
 
+    def _metricas(self, c: dict, agora: float) -> dict:
+        """Números do canal ao vivo. None = não medido (ainda medindo, ou a plataforma não entrega)."""
+        if not c.get("online"):
+            return c
+        g = self._crescimento(f"{c['plataforma']}:{c['login']}")
+        c["crescimento"] = round(g[0] * 100) if g else None
+        c["chat_min"] = c["clipes_30"] = None
+        if c["plataforma"] == "twitch":
+            r = self.ritmos.get(c["login"])
+            c["chat_min"] = r.por_minuto(agora) if r else None
+            cl = self.clips_vivo.get(c["login"])
+            if cl:
+                c["clipes_30"], c["clipes_views"] = cl["total"], cl["views"]
+        return c
+
+    def _ranking(self, canais: list[dict]) -> list[dict]:
+        """Nota de 0 a 100 entre os canais ao vivo. Cada métrica vale em relação ao maior valor da lista agora;
+        métrica que a plataforma não entrega (chat e clipes na Kick) sai da conta e os pesos se redistribuem."""
+        vivos = [c for c in canais if c.get("online")]
+        maior = {k: max((c.get(k) or 0 for c in vivos), default=0) for k in ("espectadores", "chat_min", "clipes_30")}
+        for c in vivos:
+            partes = {"audiencia": math.log10((c.get("espectadores") or 0) + 1) / math.log10(maior["espectadores"] + 1) if maior["espectadores"] else 0.0}
+            if c.get("crescimento") is not None:
+                partes["crescimento"] = min(max(c["crescimento"] / 30, 0.0), 1.0)  # +30% em ~10 min já vale o máximo
+            if c.get("chat_min") is not None:
+                partes["chat"] = math.log10(c["chat_min"] + 1) / math.log10(maior["chat_min"] + 1) if maior["chat_min"] else 0.0
+            if c.get("clipes_30") is not None:
+                partes["clipes"] = c["clipes_30"] / maior["clipes_30"] if maior["clipes_30"] else 0.0
+            c["nota"] = round(100 * sum(PESOS[k] * v for k, v in partes.items()) / sum(PESOS[k] for k in partes))
+            c["nota_com"] = list(partes)
+        return sorted(vivos, key=lambda c: (-c["nota"], -(c.get("espectadores") or 0)))[:5]
+
     def listar(self) -> dict:
-        canais = []
-        for c in self.cfg["canais"]:
-            canais.append({**c, **self.estado.get(f"{c['plataforma']}:{c['login']}", {"online": None})})
+        agora = time.time()
+        canais = [self._metricas({**c, **self.estado.get(f"{c['plataforma']}:{c['login']}", {"online": None})}, agora) for c in self.cfg["canais"]]
+        top = self._ranking(canais)
         eu = self.cfg["twitch"].get("login", "").lower()
         clips = [{**c, "meu_canal": c.get("login", "").lower() == eu} for c in reversed(self.cfg["clips"][-30:])]
-        return {"canais": canais, "clips": clips, "sugestoes": list(reversed(self.sugestoes))}
+        return {"canais": canais, "top": [{"plataforma": c["plataforma"], "login": c["login"]} for c in top], "clips": clips,
+                "avisos": list(reversed(self.avisos)), "agora": agora}
 
     # ------------------------------------------------------ chat da Twitch (somente leitura)
 
     def _ajustar_chats(self) -> None:
-        querem = {c["login"] for c in self.cfg["canais"] if c["plataforma"] == "twitch" and c.get("chat")
-                  and self.estado.get(f"twitch:{c['login']}", {}).get("online")}
+        """Lê o chat de todo canal da Twitch ao vivo da lista: mede msgs/min para o ranking e avisa quando o chat explode."""
+        querem = {c["login"] for c in self.cfg["canais"] if c["plataforma"] == "twitch" and self.estado.get(f"twitch:{c['login']}", {}).get("online")}
         if not self.cfg["twitch"].get("login"):
             querem = set()
         for login, parar in list(self.chats.items()):
             if login not in querem:
                 parar.set()
                 del self.chats[login]
+                self.ritmos.pop(login, None)
         for login in querem - set(self.chats):
             parar = threading.Event()
             self.chats[login] = parar
@@ -377,6 +520,7 @@ class Canais:
                 s = ssl.create_default_context().wrap_socket(bruto, server_hostname=host) if int(porta or 6697) == 6697 else bruto
                 tw = self.cfg["twitch"]
                 s.sendall(f"PASS oauth:{tw['access_token']}\r\nNICK {tw['login'].lower()}\r\nJOIN #{login}\r\n".encode())
+                ritmo = self.ritmos[login] = Ritmo()  # reconectou: recomeça a medir, sem misturar com o buraco da queda
                 resto = ""
                 while not parar.is_set():
                     try:
@@ -394,9 +538,11 @@ class Canais:
                             self._renovar()
                             raise OSError("token renovado")
                         elif " PRIVMSG " in linha:
-                            achado = detector.registrar(time.time(), linha.split(" :", 1)[-1])
+                            agora = time.time()
+                            ritmo.registrar(agora)
+                            achado = detector.registrar(agora, linha.split(" :", 1)[-1])
                             if achado:
-                                self.sugestoes.append({"plataforma": "twitch", "login": login, "quando": time.time(), **achado})
+                                self._avisar("chat", "twitch", login, achado["motivo"])
                 s.close()
             except (OSError, ErroApi, KeyError):
                 parar.wait(15)

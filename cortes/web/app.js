@@ -22,8 +22,9 @@ const ICONES = {
 };
 const TELAS = [['inicio', 'Início'], ['descobrir', 'Lives'], ['lives', 'Lives'], ['gerar', 'Gerar Cortes'], ['cortes', 'Meus Cortes'], ['editor', 'Editor'], ['referencias', 'Referências'], ['config', 'Configurações']];
 const CORES = { Twitch: 'var(--twitch)', Kick: 'var(--kick)', YouTube: 'var(--youtube)', twitch: 'var(--twitch)', kick: 'var(--kick)' };
+const PLATAFORMA = { twitch: 'Twitch', kick: 'Kick' };
 const ETAPAS = ['Lendo o áudio', 'Procurando picos', 'Transcrevendo', 'Gerando os cortes'];
-const G = { tela: 'inicio', lives: [], tarefas: [], canais: { canais: [], clips: [], sugestoes: [] }, filtro: { plataforma: 'Todas', streamer: '', ordem: 'recentes', estado: 'todos' }, visiveis: [], atual: 0, acompanhando: false, cfg: null, abaLives: 'vivo', modoGerar: 'manual' };
+const G = { tela: 'inicio', lives: [], tarefas: [], canais: { canais: [], top: [], clips: [], avisos: [] }, filtro: { plataforma: 'Todas', streamer: '', ordem: 'recentes', estado: 'todos' }, visiveis: [], atual: 0, acompanhando: false, cfg: null, abaLives: 'vivo', modoGerar: 'manual' };
 const ESTADOS = { pronto: 'Pronto para editar', editando: 'Em edição', exportado: 'Reel exportado' };
 
 function avisar(texto, erro = false) {
@@ -80,6 +81,7 @@ async function atualizarFundo() {
     const [tarefas, canais] = await Promise.all([api('/api/tarefas'), api('/api/canais')]);
     const ativas = tarefas.filter(t => t.estado === 'fila' || t.estado === 'rodando');
     G.tarefas = tarefas; G.canais = canais;
+    novosAvisos(canais.avisos || []);
     $('#menu-fila').hidden = !ativas.length;
     $('#menu-fila').textContent = `${ativas.length} na fila`;
     if (G.tela === 'inicio') desenharPainelVivo();
@@ -151,9 +153,11 @@ function desenharPainelVivo() {
   const num = (v, r, c = '') => el('div', { className: 'card numero ' + c }, el('b', { textContent: v }), el('span', { textContent: r }));
   $('#numeros').replaceChildren(num(cortes.length, 'Cortes gerados'), num(cortes.reduce((s, c) => s + c.editados.length, 0), 'Reels editados'),
     num(`${ao}/${G.canais.canais.length}`, 'Lives ao vivo agora', 'ao-vivo'), num(ativas.length, 'Tarefas em andamento'));
-  $('#ini-canais').replaceChildren(...(G.canais.canais.length ? G.canais.canais.slice(0, 6).map(c => el('div', { className: 'linha-item' },
+  const ordem = [...G.canais.canais].sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0) || (b.nota || 0) - (a.nota || 0));
+  $('#ini-canais').replaceChildren(...(ordem.length ? ordem.slice(0, 6).map(c => el('div', { className: 'linha-item' },
     el('span', { className: 'ponto' + (c.online ? ' on' : '') }),
-    el('span', { className: 'nome' }, c.login, el('small', { textContent: c.online ? (c.jogo || c.titulo || 'Ao vivo') : c.online === false ? 'Offline' : (c.erro || 'Aguardando status') })),
+    el('span', { className: 'nome' }, c.login, el('small', { textContent: c.online ? `${c.nota !== undefined ? `Nota ${c.nota} · ` : ''}${c.jogo || c.titulo || 'Ao vivo'}` : c.online === false ? 'Offline' : (c.erro || 'Aguardando status') })),
+    el('span', { className: 'selo', style: `--cor:${CORES[c.plataforma]}`, textContent: PLATAFORMA[c.plataforma] }),
     c.online ? el('span', { className: 'selo live', textContent: fmtNum(c.espectadores) }) : null))
     : [el('p', { className: 'dica', textContent: 'Adicione canais na tela Lives.' })]));
   const itens = G.tarefas.slice(0, 5);
@@ -351,37 +355,96 @@ function desenharLives() {
       el('label', {}, 'Plataforma', el('select', { id: 'novo-plat' }, el('option', { value: 'twitch', textContent: 'Twitch' }), el('option', { value: 'kick', textContent: 'Kick' }))),
       el('label', {}, 'Canal', el('input', { id: 'novo-login', required: true, placeholder: 'nome do canal ou link', autocomplete: 'off' })),
       el('button', { className: 'btn', type: 'submit', textContent: 'Adicionar' })),
-    el('div', { className: 'tres' },
+    el('div', { className: 'duas', style: 'margin-bottom:16px' },
+      el('section', { className: 'card bloco', style: 'margin:0' }, el('h2', { className: 'tit', textContent: 'Top 5 ao vivo agora' }), el('div', { id: 'lista-top', className: 'top-vivo' }),
+        el('p', { className: 'dica', textContent: 'Nota de 0 a 100 entre os seus canais ao vivo: audiência, crescimento em ~10 min, mensagens por minuto no chat e clipes dos últimos 30 min. Na Kick a nota usa só audiência e crescimento, porque a API oficial dela não entrega chat nem clipes.' })),
+      el('section', { className: 'card bloco', style: 'margin:0' }, el('div', { className: 'topo-linha', style: 'margin-bottom:10px' }, el('h2', { className: 'tit', style: 'margin:0', textContent: 'Avisos' }), botaoNotificar()),
+        el('div', { id: 'lista-avisos', className: 'lista' }))),
+    el('div', { id: 'lista-canais', className: 'canais' }),
+    el('div', { className: 'tres', style: 'margin-top:16px' },
       el('div', { className: 'card' }, el('h3', { textContent: 'Criar clip' }), el('p', { textContent: 'Canal da Twitch ao vivo que permite clips, com sua conta conectada. O clip aparece em Clips criados.' })),
       el('div', { className: 'card' }, el('h3', { textContent: 'Arquivo do clip' }), el('p', { textContent: 'Só sai da Twitch para o dono do canal e editores. Nos demais, o clip fica como link.' })),
-      el('div', { className: 'card' }, el('h3', { textContent: 'Depois da live' }), el('p', {}, 'Para cortar a gravação, use ', el('button', { className: 'btn leve mini', type: 'button', textContent: 'Gerar Cortes', onclick: () => irPara('gerar', { modo: 'manual' }) }), ' e cole o link da live encerrada.'))),
-    el('div', { id: 'lista-canais', className: 'canais' }),
-    el('h2', { className: 'tit', style: 'margin-top:20px', textContent: 'Sugestões do chat' }), el('div', { id: 'lista-sugestoes', className: 'lista' }));
+      el('div', { className: 'card' }, el('h3', { textContent: 'Depois da live' }), el('p', {}, 'Para cortar a gravação, use ', el('button', { className: 'btn leve mini', type: 'button', textContent: 'Gerar Cortes', onclick: () => irPara('gerar', { modo: 'manual' }) }), ' e cole o link da live encerrada.'))));
   desenharCanais();
+}
+/* ---------- ranking e avisos dos canais ao vivo ---------- */
+const ROTULO_AVISO = { online: 'Entrou ao vivo', subindo: 'Audiência subindo', chat: 'Chat explodindo', clipes: 'Clipes saindo' };
+const linkCanal = c => (c.plataforma === 'kick' ? `https://kick.com/${c.login}` : `https://www.twitch.tv/${c.login}`);
+function chipsMetricas(c) {
+  const chip = (texto, classe = '', title = '') => el('span', { className: 'met ' + classe, textContent: texto, title });
+  const m = [chip(`${fmtNum(c.espectadores)} assistindo`)];
+  m.push(c.crescimento === null || c.crescimento === undefined ? chip('crescimento: medindo', 'fraco', 'Precisa de ~10 min de amostras com o painel aberto.')
+    : chip(`${c.crescimento > 0 ? '+' : ''}${c.crescimento}% em 10 min`, c.crescimento >= 10 ? 'sobe' : c.crescimento <= -10 ? 'desce' : ''));
+  if (c.plataforma === 'twitch') {
+    m.push(c.chat_min === null || c.chat_min === undefined ? chip('chat: medindo', 'fraco', 'O primeiro minuto de chat ainda está sendo contado.') : chip(`${fmtNum(c.chat_min)} msgs/min`));
+    m.push(c.clipes_30 === null || c.clipes_30 === undefined ? chip('clipes: medindo', 'fraco', 'A contagem de clipes roda a cada 2 min.')
+      : chip(`${c.clipes_30} clipe${c.clipes_30 === 1 ? '' : 's'} em 30 min`, '', c.clipes_views ? `${fmtNum(c.clipes_views)} visualizações somadas` : ''));
+  } else m.push(chip('chat e clipes: sem API', 'fraco', 'A API oficial da Kick não entrega mensagens do chat nem clipes.'));
+  return m;
+}
+function linhaTop(c, i) {
+  return el('div', { className: 'top-item' },
+    el('span', { className: 'pos', textContent: i + 1 }),
+    c.thumb ? el('img', { src: `${c.thumb}${c.thumb.includes('?') ? '&' : '?'}t=${Math.floor(Date.now() / 60000)}`, alt: '', loading: 'lazy' }) : el('span', { className: 'sem-thumb' }),
+    el('div', { className: 'top-info' },
+      el('div', { className: 'topo-linha' }, el('b', { textContent: c.nome || c.login }), el('span', { className: 'selo', style: `--cor:${CORES[c.plataforma]}`, textContent: PLATAFORMA[c.plataforma] })),
+      el('small', { textContent: [c.titulo, c.jogo].filter(Boolean).join(' · '), title: c.titulo || '' }),
+      el('div', { className: 'metricas' }, ...chipsMetricas(c))),
+    el('div', { className: 'top-nota', title: `Nota calculada com: ${(c.nota_com || []).join(', ')}` }, el('b', { textContent: c.nota }), el('small', { textContent: 'nota' }),
+      el('a', { className: 'btn leve mini', href: linkCanal(c), target: '_blank', rel: 'noopener', textContent: 'Assistir' }),
+      c.plataforma === 'twitch' ? el('button', { className: 'btn mini', type: 'button', textContent: 'Criar clip', onclick: () => criarClip(c.login) }) : null));
+}
+function linhaAviso(a) {
+  return el('div', { className: 'linha-item' },
+    el('span', { className: 'selo', style: `--cor:${CORES[a.plataforma]}`, textContent: PLATAFORMA[a.plataforma] }),
+    el('span', { className: 'nome' }, `${a.login} · ${ROTULO_AVISO[a.tipo] || 'Aviso'}`, el('small', { textContent: `${a.texto} · ${new Date(a.quando * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`, title: a.texto })),
+    a.plataforma === 'twitch' && a.tipo !== 'online' ? el('button', { className: 'btn mini', type: 'button', textContent: 'Criar clip', onclick: () => criarClip(a.login) })
+      : el('a', { className: 'btn leve mini', href: linkCanal(a), target: '_blank', rel: 'noopener', textContent: 'Assistir' }));
+}
+/* Aviso novo vira um balão no painel e, se permitido, notificação do Windows quando o painel está em segundo plano. */
+function novosAvisos(lista) {
+  const ultimo = G.ultimoAviso;
+  G.ultimoAviso = Math.max(ultimo || 0, ...lista.map(a => a.quando));
+  if (ultimo === undefined) return; // primeira leitura: não repete avisos antigos
+  for (const a of lista.filter(a => a.quando > ultimo).reverse()) {
+    const texto = `${a.login} (${PLATAFORMA[a.plataforma]}): ${ROTULO_AVISO[a.tipo] || 'Aviso'} · ${a.texto}`;
+    avisar(texto);
+    if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification('Vice Clips', { body: texto, tag: `${a.tipo}:${a.login}` });
+  }
+}
+function botaoNotificar() {
+  if (!('Notification' in window) || Notification.permission !== 'default') return null;
+  const b = el('button', { className: 'btn leve mini', type: 'button', textContent: 'Avisar no Windows', title: 'Mostra os avisos como notificação do Windows quando o painel está em segundo plano',
+    onclick: async () => { await Notification.requestPermission(); b.remove(); } });
+  return b;
 }
 async function recarregarCanais() { G.canais = await api('/api/canais'); if (G.tela === 'lives') desenharCanais(); }
 const criarClip = tentar(async (login, duracao = 30) => { await api('/api/twitch/clip', { login, duracao }); avisar('Clip solicitado. Ele aparece em Clips criados assim que a Twitch confirmar.'); });
 function desenharCanais() {
-  const { canais, clips, sugestoes } = G.canais;
+  const { canais, clips, avisos = [], top = [] } = G.canais;
   if ($('#lista-clips')) $('#lista-clips').replaceChildren(...(clips.length ? clips.slice(0, 24).map(cartaoClip) : [el('div', { className: 'vazio', textContent: 'Os clips criados por aqui aparecem nesta lista.' })]));
   if (!$('#lista-canais')) return;
-  $('#lista-canais').replaceChildren(...(canais.length ? canais.map(c => {
-    const selo = c.online ? el('span', { className: 'selo live', textContent: 'AO VIVO' }) : null;
+  const ranking = top.map(t => canais.find(c => c.plataforma === t.plataforma && c.login === t.login)).filter(Boolean);
+  $('#lista-top').replaceChildren(...(ranking.length ? ranking.map(linhaTop)
+    : [el('p', { className: 'dica', style: 'margin:0', textContent: canais.length ? 'Nenhum dos seus canais está ao vivo agora.' : 'Adicione canais acima para ver o ranking.' })]));
+  $('#lista-avisos').replaceChildren(...(avisos.length ? avisos.slice(0, 8).map(linhaAviso)
+    : [el('p', { className: 'dica', style: 'margin:0', textContent: 'Os avisos aparecem aqui com o painel aberto: canal que entra ao vivo, audiência subindo, chat explodindo e rajada de clipes (esses dois só na Twitch).' })]));
+  const posicao = new Map(ranking.map((c, i) => [`${c.plataforma}:${c.login}`, i + 1]));
+  const ordem = [...canais].sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0) || (b.nota || 0) - (a.nota || 0));
+  $('#lista-canais').replaceChildren(...(ordem.length ? ordem.map(c => {
+    const selo = c.online ? el('span', { className: 'selo live', textContent: posicao.has(`${c.plataforma}:${c.login}`) ? `AO VIVO · #${posicao.get(`${c.plataforma}:${c.login}`)}` : 'AO VIVO' }) : null;
     return el('article', { className: 'card canal' },
-      el('div', { className: 'foto' }, c.online && c.thumb ? el('img', { src: `${c.thumb}?t=${Math.floor(Date.now() / 60000)}`, alt: '' }) : el('span', { textContent: c.online === false ? 'Offline' : 'Sem status' }), selo),
+      el('div', { className: 'foto' }, c.online && c.thumb ? el('img', { src: `${c.thumb}${c.thumb.includes('?') ? '&' : '?'}t=${Math.floor(Date.now() / 60000)}`, alt: '' }) : el('span', { textContent: c.online === false ? 'Offline' : 'Sem status' }), selo),
       el('div', { className: 'info' },
-        el('div', { className: 'topo-linha' }, el('h3', { textContent: c.nome || c.login }), el('span', { className: 'selo', style: `--cor:${CORES[c.plataforma]}`, textContent: c.plataforma === 'twitch' ? 'Twitch' : 'Kick' })),
-        el('p', { className: 'sub', textContent: c.online ? `${c.titulo || ''} ${c.jogo ? '· ' + c.jogo : ''} · ${fmtNum(c.espectadores)} assistindo` : (c.erro || 'Fora do ar no momento.') }),
+        el('div', { className: 'topo-linha' }, el('h3', { textContent: c.nome || c.login }), el('span', { className: 'selo', style: `--cor:${CORES[c.plataforma]}`, textContent: PLATAFORMA[c.plataforma] })),
+        el('p', { className: 'sub', textContent: c.online ? [c.titulo, c.jogo].filter(Boolean).join(' · ') : (c.erro || 'Fora do ar no momento.') }),
+        c.online ? el('div', { className: 'metricas' }, ...chipsMetricas(c), c.nota !== undefined ? el('span', { className: 'met nota', textContent: `nota ${c.nota}` }) : null) : null,
         el('div', { className: 'ctrl' },
           c.online === null && c.erro ? el('button', { className: 'btn mini', type: 'button', textContent: 'Configurar', onclick: () => irPara('config') }) : null,
           c.plataforma === 'twitch' && c.online ? el('button', { className: 'btn mini', type: 'button', textContent: 'Criar clip', onclick: () => criarClip(c.login) }) : null,
-          c.plataforma === 'twitch' ? el('label', { className: 'troca' }, el('input', { type: 'checkbox', checked: !!c.chat, onchange: tentar(e => api('/api/twitch/chat', { login: c.login, ativo: e.target.checked })) }), 'Sugerir pelo chat') : null,
+          c.online ? el('a', { className: 'btn leve mini', href: linkCanal(c), target: '_blank', rel: 'noopener', textContent: 'Assistir' }) : null,
           el('button', { className: 'btn leve mini perigo', type: 'button', textContent: 'Remover', onclick: tentar(async () => { await api('/api/canais/remover', { plataforma: c.plataforma, login: c.login }); await recarregarCanais(); }) }))));
   }) : [el('div', { className: 'vazio', textContent: 'Nenhum canal adicionado.' })]));
-  $('#lista-sugestoes').replaceChildren(...(sugestoes.length ? sugestoes.slice(0, 6).map(s => el('div', { className: 'linha-item' },
-    el('span', { className: 'nome' }, s.login, el('small', { textContent: `${s.motivo} · ${new Date(s.quando * 1000).toLocaleTimeString('pt-BR')}` })),
-    el('button', { className: 'btn mini', type: 'button', textContent: 'Criar clip', onclick: () => criarClip(s.login) })))
-    : [el('p', { className: 'dica', textContent: 'Ative “Sugerir pelo chat” em um canal ao vivo para receber avisos quando o chat explodir.' })]));
 }
 
 /* ---------- escolher o momento: gravação da Twitch/Kick ou arquivo do PC ---------- */

@@ -75,9 +75,11 @@ Eventos visuais do jogo não entram no cálculo.
 | Status ao vivo na Twitch | Exige Client ID gratuito e conta conectada |
 | Criar clip na Twitch | Exige conta conectada, canal ao vivo e clips liberados pelo canal |
 | Baixar clip da Twitch | A Twitch libera só ao dono do canal e aos editores dele |
-| Sugestões pelo chat da Twitch | Avisa quando o chat acelera. Quem decide criar o clip é você |
+| Top 5 ao vivo (Lives → Meus canais) | Nota de 0 a 100 entre os seus canais ao vivo: audiência, crescimento em ~10 min, mensagens por minuto no chat e clipes dos últimos 30 min |
+| Avisos | Canal entrou ao vivo, audiência +25% em ~10 min, chat acelerando (Twitch) e 3+ clipes em 10 min (Twitch). Aparecem no painel e, se você permitir, como notificação do Windows |
+| Chat da Twitch | Lido (só leitura) em todo canal da Twitch ao vivo da sua lista. Quem decide criar o clip é você |
 | Status ao vivo na Kick | Exige Client ID e Client Secret gratuitos |
-| Clips na Kick | A Kick não oferece API. Use o link da gravação em Gravações / VODs |
+| Chat e clips na Kick | A API oficial da Kick não entrega nenhum dos dois: na Kick a nota usa só audiência e crescimento. Para cortar, use o link da gravação em Gravações / VODs |
 | Gravação da Twitch | Dados pela API oficial e player oficial. O trecho só é baixado com autorização confirmada |
 | Clip sem permissão de download | Fica como "Só link". Use Importar arquivo autorizado se o criador enviar o arquivo |
 | Captura contínua da live | Não disponível. Use o link da gravação quando a live terminar |

@@ -406,3 +406,25 @@ dialog::backdrop { background: rgba(4, 4, 14, .85); }
 .marca-linha { display: flex; gap: 10px; align-items: center; }
 .marca-logo { flex: none; width: 64px; height: 64px; border-radius: 50%; object-fit: cover; border: 1px solid var(--linha2); }
 .marca-logo.vazio { display: grid; place-items: center; color: var(--fraco); font-size: 11px; }
+/* ranking dos canais ao vivo e avisos */
+.top-vivo { display: grid; gap: 8px; }
+.top-item { display: grid; grid-template-columns: 26px 120px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 8px 10px; background: rgba(255, 255, 255, .025); border-radius: 10px; }
+.top-item .pos { font: 800 22px/1 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; color: var(--rosa2); text-align: center; }
+.top-item img, .top-item .sem-thumb { display: block; width: 120px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 7px; background: linear-gradient(135deg, #1b1140, #3a1140); }
+.top-info { display: grid; gap: 5px; min-width: 0; }
+.top-info .topo-linha { justify-content: flex-start; gap: 8px; min-width: 0; }
+.top-info b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.top-info small { color: var(--suave); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.top-nota { display: grid; justify-items: center; gap: 4px; }
+.top-nota b { font: 800 24px/1 "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; color: #fff; }
+.top-nota small { color: var(--suave); font-size: 11px; margin-top: -3px; }
+.metricas { display: flex; flex-wrap: wrap; gap: 5px; }
+.met { padding: 1px 7px; border-radius: 5px; font-size: 11.5px; color: var(--texto); background: rgba(45, 226, 230, .07); border: 1px solid var(--linha2); white-space: nowrap; }
+.met.sobe { color: var(--ok); border-color: rgba(77, 255, 176, .35); }
+.met.desce { color: var(--erro); }
+.met.fraco { color: var(--fraco); background: none; }
+.met.nota { color: var(--rosa2); border-color: var(--linha); }
+@media (max-width: 780px) {
+  .top-item { grid-template-columns: 22px minmax(0, 1fr) auto; }
+  .top-item img, .top-item .sem-thumb { display: none; }
+}
