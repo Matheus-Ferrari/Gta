@@ -8,3 +8,8 @@ if not exist "%PY%" (
   exit /b 1
 )
 "%PY%" "%~dp0cortar.py" %*
+if errorlevel 1 (
+  echo.
+  echo Deu erro. Tire um print desta janela e mande para o Matheus.
+  pause
+)
