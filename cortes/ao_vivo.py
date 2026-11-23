@@ -424,14 +424,74 @@ class Analisador:
 analisador = Analisador()
 
 
+RISO_CHAT = re.compile(r"k{4,}|(?:ha){3,}|(?:rs){3,}|(?:ja){3,}|kekw|lul|omegalul|lmao|😂|🤣", re.I)
+REACAO_CHAT = re.compile(r"\b(?:caralho|porra|mds|meu deus|que isso|nossa|absurdo|insano|mito|lend[aá]rio|pog\w*|wtf|omg|cringe)\b|w+o+w+|😱|😮|🔥", re.I)
+PEDE_CLIP = re.compile(r"\bclip(?:a|e|ou|ar|em)?\b|\bcorta\b|\bcortem\b", re.I)
+
+
+def _chave(fonte: str, pico: float) -> str:
+    return f"{fonte}:{round(float(pico) * 10)}"  # décimos de segundo: a mesma chave no Python e no navegador
+
+
+class ChatMomentos:
+    """Lê o chat junto com a gravação. Chat acelerando, enchendo de risada, de reação ou pedindo "clipa" vira momento com nota.
+    O chat reage alguns segundos depois do lance: o momento é marcado ~6 s antes da reação."""
+
+    REACAO_ATRASO, ANTES, DEPOIS, RECARGA = 6, 20, 8, 30
+
+    def __init__(self) -> None:
+        self.msgs: deque = deque()  # (t, riso, reacao, pede_clip)
+        self.avaliado = 0.0
+        self.ultimo: dict | None = None
+        self.momentos: list[dict] = []
+        self.total = 0
+
+    def registrar(self, t: float, texto: str) -> dict | None:
+        self.total += 1
+        self.msgs.append((t, bool(RISO_CHAT.search(texto)), bool(REACAO_CHAT.search(texto)), bool(PEDE_CLIP.search(texto))))
+        while self.msgs[0][0] < t - 180:
+            self.msgs.popleft()
+        if t - self.avaliado < 2:  # avalia no máximo a cada 2 s: chat grande não pesa
+            return None
+        self.avaliado = t
+        lista = list(self.msgs)
+        recentes = [m for m in lista if m[0] > t - 10]
+        base = [m for m in lista if m[0] <= t - 10]
+        if len(recentes) < 8 or not base or t - 10 - base[0][0] < 45:  # precisa de 45 s de chat "normal" para comparar
+            return None
+        ritmo = len(recentes) / max(len(base) / (t - 10 - base[0][0]) * 10, 1.0)
+        riso = sum(m[1] for m in recentes) / len(recentes)
+        reacao = sum(m[2] for m in recentes) / len(recentes)
+        clipa = sum(m[3] for m in recentes)
+        if ritmo < 2.5 and riso < 0.35 and reacao < 0.3 and clipa < 3:
+            return None
+        nota = int(min(100, 25 * min(ritmo / 4, 1) + 35 * min(riso / 0.6, 1) + 25 * min(clipa / 6, 1) + 15 * min(reacao / 0.5, 1) + 10))
+        motivos = [f for f in (ritmo >= 1.5 and f"chat {ritmo:.1f}x mais rápido", riso >= 0.2 and f"{riso:.0%} rindo (kkkk)",
+                                clipa >= 2 and f"{clipa} pedindo clip", reacao >= 0.2 and f"{reacao:.0%} reagindo") if f]
+        if self.ultimo and t - self.ultimo["t"] < self.RECARGA:  # mesmo lance: fica com a reação mais forte
+            if nota > self.ultimo["nota"]:
+                self.ultimo.update(nota=nota, motivos=motivos)
+            return None
+        self.ultimo = {"t": t, "nota": nota, "motivos": motivos, "fonte": "chat"}
+        self.momentos.append(self.ultimo)
+        del self.momentos[:-60]
+        return self.ultimo
+
+    def por_minuto(self, agora: float) -> int:
+        return sum(1 for m in list(self.msgs) if m[0] > agora - 60)
+
+
 class Captura:
-    """Grava a live da Twitch (do ponto atual em diante) num arquivo que cresce, e liga a análise em janelas nele.
+    """Grava a live da Twitch ou da Kick (do ponto atual em diante) num arquivo que cresce, e liga a análise em janelas nele.
+    Junto, lê o chat (Twitch) e marca os momentos em que ele explode. Com "clipar sozinho", momentos acima da nota viram cortes.
     Só com autorização confirmada; o vídeo fica no PC e os cortes saem direto desse arquivo."""
 
     def __init__(self) -> None:
         self.trava = threading.Lock()
         self.proc: subprocess.Popen | None = None
         self.info: dict = {}
+        self.chat: ChatMomentos | None = None
+        self.feitos: dict[str, str] = {}  # momento (fonte:pico) -> corte criado ("" enquanto cria)
 
     def rodando(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
@@ -440,9 +500,11 @@ class Captura:
         from .fontes import YTDLP
         if not d.get("autorizado"):
             raise ValueError("Confirme que você tem autorização para gravar e cortar esta live.")
-        login = re.sub(r"^https?://(www\.)?twitch\.tv/", "", str(d.get("login") or "").strip().lower()).strip("/@ ").split("/")[0]
-        if not re.fullmatch(r"[a-z0-9_]{3,25}", login):
-            raise ValueError("Canal da Twitch inválido.")
+        plataforma = "kick" if str(d.get("plataforma") or "").lower() == "kick" or "kick.com/" in str(d.get("login") or "") else "twitch"
+        login = re.sub(r"^https?://(www\.)?(twitch\.tv|kick\.com)/", "", str(d.get("login") or "").strip().lower()).strip("/@ ").split("/")[0]
+        if not re.fullmatch(r"[a-z0-9_-]{2,25}" if plataforma == "kick" else r"[a-z0-9_]{3,25}", login):
+            raise ValueError(f"Canal da {plataforma.capitalize()} inválido.")
+        url = f"https://kick.com/{login}" if plataforma == "kick" else f"https://www.twitch.tv/{login}"
         altura = {"480": 480, "720": 720, "1080": 1080}.get(str(d.get("qualidade") or "720"), 720)
         with self.trava:
             if self.rodando():
@@ -454,11 +516,91 @@ class Captura:
             arquivo = pasta / f"{login}_{time.strftime('%Y-%m-%d_%H%M')}.ts"
             log = (pasta / "captura.log").open("w", encoding="utf-8")
             self.proc = subprocess.Popen([*YTDLP, "-f", f"best[height<={altura}]/best", "--hls-use-mpegts", "--no-part", "-o", str(arquivo),
-                                          f"https://www.twitch.tv/{login}"], cwd=BASE, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                                          url], cwd=BASE, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                          creationflags=PRIORIDADE)
-            self.info = {"login": login, "arquivo": str(arquivo), "comecou": time.time(), "qualidade": f"{altura}p", "erro": "",
-                         "inicio_live": str(d.get("inicio_live") or ""), "estado": "conectando"}
+            self.info = {"login": login, "plataforma": plataforma, "arquivo": str(arquivo), "comecou": time.time(), "qualidade": f"{altura}p", "erro": "",
+                         "inicio_live": str(d.get("inicio_live") or ""), "estado": "conectando", "auto": max(0, min(int(d.get("auto") or 0), 100))}
+            self.chat, self.feitos = ChatMomentos(), {}
+        if plataforma == "twitch":  # o chat da Twitch já é lido pelo painel (só leitura); a gravação passa a escutar este canal
+            from .canais import canais
+            canais.ouvintes = {login: self._ouvir}
+            threading.Thread(target=canais._ajustar_chats, daemon=True).start()
         threading.Thread(target=self._ligar_analise, args=(arquivo, bool(d.get("transcrever"))), daemon=True).start()
+        threading.Thread(target=self._clipar_sozinho, args=(arquivo,), daemon=True).start()
+        return self.estado()
+
+    # ---------------------------------------------- momentos do chat e cortes automáticos
+
+    def _ouvir(self, t: float, texto: str) -> None:
+        chat = self.chat
+        m = chat.registrar(t, texto) if chat else None
+        if m:
+            threading.Thread(target=self._marcar, args=(m,), daemon=True).start()
+
+    def _marcar(self, m: dict) -> None:
+        """Converte o horário da reação no ponto da gravação: o fim do arquivo que cresce é "agora"."""
+        from .editor import sondar
+        try:
+            dur = float(sondar(Path(self.info["arquivo"]))["dur"])
+        except Exception:
+            return
+        pico = dur - (time.time() - (m["t"] - ChatMomentos.REACAO_ATRASO))
+        m.update(pico=round(max(0.0, pico), 1), inicio=round(max(0.0, pico - ChatMomentos.ANTES), 1), fim=round(max(1.0, pico + ChatMomentos.DEPOIS), 1))
+
+    def _criar(self, chave: str, s: dict, fila) -> object:
+        """Cria o corte de um momento (do chat ou da análise) e lembra qual corte saiu dele."""
+        from . import vods
+        info = vods.abrir_arquivo(self.info["arquivo"])
+        login = self.info["login"]
+        dados = {"tipo": "arquivo", "id": info["id"], "inicio": s["inicio"], "fim": s["fim"], "streamer": login,
+                 "plataforma": {"kick": "Kick"}.get(self.info.get("plataforma", ""), "Twitch"),
+                 "titulo": (s.get("fala") or "")[:120] or f"{login}: {', '.join(s.get('motivos') or [])[:100]}"}
+        self.feitos[chave] = ""
+
+        def trabalho(t):
+            r = vods.criar_corte(dados, t)
+            self.feitos[chave] = r.get("corte", "")
+            return r
+        return fila.adicionar("corte", f"Corte de {login} ({s.get('nota', '')} pts)", trabalho, f"aovivo:{chave}")
+
+    def cortar_momento(self, d: dict, fila) -> dict:
+        chat = self.chat
+        try:
+            m = chat.momentos[int(d.get("indice", -1))]
+        except (AttributeError, IndexError, ValueError):
+            raise ValueError("Momento não encontrado. Atualize a lista.") from None
+        if "fim" not in m:
+            raise ValueError("Esse momento ainda está sendo localizado na gravação. Tente em alguns segundos.")
+        return self._criar(_chave("chat", m["pico"]), m, fila).publico()
+
+    def _clipar_sozinho(self, arquivo: Path) -> None:
+        """Com "clipar sozinho" ligado, todo momento (chat ou análise) com nota acima do limite vira corte, quando o trecho já foi gravado."""
+        from .editor import sondar
+        from .tarefas import fila
+        while self.rodando() or analisador.rodando() or self.info.get("estado") == "conectando":
+            time.sleep(5)
+            limite = self.info.get("auto") or 0
+            if not limite or not arquivo.is_file():
+                continue
+            try:
+                dur = float(sondar(arquivo)["dur"])
+            except Exception:
+                continue
+            e = ler_estado()
+            candidatos = [(_chave("chat", m["pico"]), m) for m in list(self.chat.momentos if self.chat else []) if "fim" in m]
+            if e.get("arquivo") == str(arquivo):  # sugestão da análise já fechada (não vai mais crescer)
+                candidatos += [(_chave("analise", s["pico"]), s) for s in e.get("sugestoes", []) if e.get("processado", 0) - s["pico_final"] > JUNTAR + 5]
+            for chave, s in candidatos:
+                if s["nota"] >= limite and chave not in self.feitos and s["fim"] <= dur - 1:
+                    try:
+                        self._criar(chave, s, fila)
+                    except ValueError:
+                        self.feitos[chave] = "erro"
+
+    def configurar_auto(self, d: dict) -> dict:
+        if not self.info:
+            raise ValueError("Nenhuma live sendo gravada.")
+        self.info["auto"] = max(0, min(int(d.get("nota") or 0), 100))
         return self.estado()
 
     def _ligar_analise(self, arquivo: Path, transcrever: bool) -> None:
@@ -488,7 +630,26 @@ class Captura:
                 subprocess.run(["taskkill", "/T", "/F", "/PID", str(self.proc.pid)], capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if self.info and not manter_erro:
                 self.info.update(estado="parada", terminou=time.time())
+        from .canais import canais
+        canais.ouvintes = {}
         return self.estado()  # a análise percebe que o arquivo parou de crescer e termina sozinha em 2 min
+
+    def clipar(self, d: dict, fila) -> dict:
+        """Clipar agora: corta os últimos N segundos da gravação em andamento e cria o corte.
+        É o "Criar clip" de quem não tem API de clipes (Kick) e funciona igual para a Twitch."""
+        from . import vods
+        if not self.info or not Path(self.info["arquivo"]).is_file():
+            raise ValueError("Nenhuma live sendo gravada. Clique em Gravar e clipar na live primeiro.")
+        seg = max(10, min(int(d.get("segundos") or 30), 120))
+        info = vods.abrir_arquivo(self.info["arquivo"])
+        total = float(info.get("duracao") or 0)
+        if total < seg + 3:
+            raise ValueError(f"A gravação ainda tem só {int(total)} s. Espere mais um pouco e clique de novo.")
+        login, plataforma = self.info["login"], {"kick": "Kick"}.get(self.info.get("plataforma", ""), "Twitch")
+        fim = total - 1  # o fim estimado do arquivo que ainda cresce; 1 s de folga
+        dados = {"tipo": "arquivo", "id": info["id"], "inicio": max(0.0, fim - seg), "fim": fim, "plataforma": plataforma, "streamer": login,
+                 "titulo": str(d.get("titulo") or "").strip()[:200] or f"Clip de {login} às {time.strftime('%H:%M')}"}
+        return fila.adicionar("corte", f"Clipando os últimos {seg} s de {login}", lambda t: vods.criar_corte(dados, t)).publico()
 
     def estado(self) -> dict:
         if not self.info:
@@ -497,7 +658,13 @@ class Captura:
         tam = arq.stat().st_size if arq.is_file() else 0
         if self.info.get("estado") in ("conectando", "gravando") and not self.rodando():
             self.info["estado"] = "encerrada"  # a live acabou ou caiu
-        return {**self.info, "rodando": self.rodando(), "mb": round(tam / 1048576), "minutos": round((time.time() - self.info["comecou"]) / 60, 1)}
+        chat = self.chat
+        momentos = [{**{k: v for k, v in m.items() if k != "t"}, "quando": m["t"], "indice": i, "corte": self.feitos.get(_chave("chat", m["pico"])) if "pico" in m else None}
+                    for i, m in enumerate(list(chat.momentos if chat else []))]
+        return {**self.info, "rodando": self.rodando(), "mb": round(tam / 1048576), "minutos": round((time.time() - self.info["comecou"]) / 60, 1),
+                "chat": {"lido": self.info.get("plataforma") == "twitch", "msgs_min": chat.por_minuto(time.time()) if chat else 0,
+                         "total": chat.total if chat else 0, "momentos": momentos[::-1][:30]},
+                "feitos": {k: v for k, v in self.feitos.items() if k.startswith("analise:")}}
 
 
 captura = Captura()

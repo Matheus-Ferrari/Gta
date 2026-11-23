@@ -15,7 +15,9 @@ import threading
 import time
 import traceback
 import unicodedata
+import urllib.error
 import urllib.parse
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 
@@ -41,6 +43,46 @@ MAX_MONITOR, MAX_FILA, MAX_VISTOS, MAX_EVENTOS = 5, 400, 5000, 500
 RESERVA_FUNDO, RESERVA_TELA = 100, 10  # pontos do balde da Twitch guardados antes de recuar
 RE_RP_TAG = re.compile(r"^(gta)?rp(br|pt|pc)?$|roleplay", re.I)
 RE_RP_TITULO = re.compile(r"\b(gta\s?)?rp\b|role\s?-?play", re.I)
+# Kick: lives, canais e categorias pela API oficial. Clipes só existem nos endpoints públicos do site (a API oficial não tem):
+# 20 por consulta e sem paginação, então a lista junta "mais vistos" e "mais recentes" do período.
+ARQ_KICK = PASTA / "kick_idiomas.json"
+KICK_SITE = "https://kick.com/api/v2"
+KICK_CONSULTAS = {"7d": [("view", "week"), ("view", "day"), ("date", "day")],  # a primeira também vale para os canais extras
+                  "1h": [("date", "day"), ("view", "day")], "6h": [("date", "day"), ("view", "day")]}
+KICK_CONSULTAS_PADRAO = [("view", "day"), ("date", "day")]
+RE_KICK = re.compile(r"[a-z0-9_-]{2,25}")
+
+
+def _kick_site(caminho: str, params: dict | None = None) -> dict:
+    url = KICK_SITE + caminho + ("?" + urllib.parse.urlencode(params) if params else "")
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "ViceClips/1.0", "Accept": "application/json"}), timeout=20) as r:
+            return json.loads(r.read().decode("utf-8", "replace") or "{}")
+    except urllib.error.HTTPError as e:
+        raise ValueError("A Kick não encontrou esse canal ou categoria." if e.code == 404 else f"A Kick recusou o pedido de clipes (erro {e.code}).") from None
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as e:
+        raise ValueError(f"Sem conexão com a Kick ({e}).") from None
+
+
+def _norm_cat(nome: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", re.sub(r"\([^)]*\)", "", nome.lower()))
+
+
+def _live_kick(s: dict, rp: str = "") -> dict:
+    slug = s.get("slug", "")
+    return {"plataforma": "kick", "user_id": str(s.get("broadcaster_user_id", "")), "login": slug, "nome": slug, "titulo": s.get("stream_title", ""),
+            "espectadores": int(s.get("viewer_count") or 0), "inicio": s.get("started_at", ""), "idioma": s.get("language", ""),
+            "tags": s.get("custom_tags") or [], "jogo": (s.get("category") or {}).get("name", ""), "rp": rp, "link": f"https://kick.com/{slug}",
+            "thumb": s.get("thumbnail") or "", "foto": s.get("profile_picture") or ""}
+
+
+def _clip_kick(d: dict) -> dict:
+    ch, cr = d.get("channel") or {}, d.get("creator") or {}
+    slug = ch.get("slug", "")
+    return {"id": d["id"], "plataforma": "kick", "url": f"https://kick.com/{slug}/clips/{d['id']}", "canal_id": slug, "canal": ch.get("username") or slug,
+            "canal_login": slug, "autor": cr.get("username", ""), "autor_id": cr.get("slug", ""), "titulo": (d.get("title") or "").strip(),
+            "views": int(d.get("view_count") or d.get("views") or 0), "criado": d.get("created_at", ""), "thumb": d.get("thumbnail_url", ""),
+            "duracao": float(d.get("duration") or 0), "idioma": "", "video_id": "", "vod_offset": None, "destaque": False}
 
 
 def _rfc(t: float) -> str:
@@ -107,6 +149,62 @@ def _clip(d: dict) -> dict:
             "destaque": bool(d.get("is_featured"))}
 
 
+def _clipe_para_corte(cid: str, kick: bool, titulo: str, canal: str, t) -> dict:
+    """Baixa o arquivo público do clipe (Twitch: mp4; Kick: HLS gravado como .ts) e cria um corte com ele inteiro."""
+    import subprocess
+    import sys as _sys
+    from . import vods
+    from .fontes import YTDLP
+    nome_plat = "Kick" if kick else "Twitch"
+    pasta = DADOS / "clipes"
+    pasta.mkdir(parents=True, exist_ok=True)
+    arquivo = pasta / f"{cid}.{'ts' if kick else 'mp4'}"
+    if not arquivo.is_file():
+        t.avancar(0.1, "Baixando o clipe")
+        if kick:  # o endereço do vídeo vem da própria Kick, não da tela
+            fonte = str((_kick_site(f"/clips/{cid}").get("clip") or {}).get("video_url") or "")
+            if not re.fullmatch(r"https://clips\.kick\.com/[\w./-]+\.m3u8", fonte):
+                raise RuntimeError("A Kick não entregou o endereço deste clipe (pode ter sido apagado).")
+            comando = [*YTDLP, "--hls-use-mpegts", "-o", str(arquivo), fonte]
+        else:
+            comando = [*YTDLP, "-f", "best[ext=mp4]/best", "-o", str(arquivo), f"https://clips.twitch.tv/{cid}"]
+        r = subprocess.run(comando, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           creationflags=subprocess.CREATE_NO_WINDOW if _sys.platform == "win32" else 0)
+        if r.returncode != 0 or not arquivo.is_file():
+            erro = (r.stderr.strip().splitlines() or ["erro desconhecido"])[-1]
+            raise RuntimeError(f"A {nome_plat} não entregou o clipe: {erro[:200]}")
+    info = vods.abrir_arquivo(str(arquivo))
+    t.avancar(0.4, "Criando o corte")
+    return vods.criar_corte({"tipo": "arquivo", "id": info["id"], "inicio": 0, "fim": max(1.0, info["duracao"] - 0.05),
+                             "titulo": titulo, "streamer": canal, "plataforma": nome_plat}, t)
+
+
+def _renderizar_no_modelo(corte: str, modelo: str, titulo: str, canal: str, t) -> dict:
+    """Aplica o layout salvo do streamer (ou o template salvo com esse nome), troca a manchete pelo título e exporta o Reel."""
+    from . import editor
+    salvo = editor.regioes_streamer(canal) or {}
+    layout = salvo.get("layout") if modelo == "streamer" else next((x["layout"] for x in editor.templates() if x.get("nome") == modelo), None)
+    if not layout:
+        return {"aviso": f"Sem layout salvo para {canal or 'este streamer'}: o corte ficou pronto para você aplicar o template no editor."}
+    t.avancar(0.5, "Preparando a fonte")
+    editor.preparar_fonte(corte, t)
+    a = editor.achar_corte(corte)
+    meta = editor.fonte_pronta(a)
+    if not meta:
+        return {"aviso": "A fonte do corte não ficou pronta para renderizar."}
+    ini, fim = max(0.0, a.corte["inicio"] - meta["t0"]), min(meta["dur"], a.corte["fim"] - meta["t0"])
+    camadas = [{**c, "texto": titulo} if c.get("papel") == "manchete" and titulo else c for c in layout.get("camadas", [])]
+    projeto = {**layout, "camadas": camadas, "inicio": ini, "fim": fim, "regioes": {k: salvo.get(k) for k in ("webcam", "gameplay", "chat", "rosto")}}
+    editor.salvar_projeto(corte, projeto, canal)
+    t.avancar(0.6, "Renderizando no template")
+    return {"exportado": editor.exportar(corte, projeto, t)}
+
+
+def _chave_mon(m: dict) -> str:
+    """Chave do status de uma live monitorada: Twitch pelo id, Kick pelo canal (o user_id da Kick já é "kick:canal")."""
+    return m["user_id"] if m.get("plataforma") == "kick" else f"twitch:{m['user_id']}"
+
+
 def _limite() -> dict:
     l = canais_mod.LIMITE
     return {k: l.get(k) for k in ("restante", "limite", "reset", "visto")}
@@ -146,6 +244,7 @@ class Descobrir:
         self.eventos: list[dict] = ler_json(ARQ_EVENTOS, []) or []
         self.status: dict[str, dict] = ler_json(ARQ_ESTADO, {}) or {}
         self.gravacoes: dict[str, dict | None] = {}  # video_id -> início da gravação (para saber o momento real de cada clipe)
+        self.kick_idiomas: dict[str, str] = ler_json(ARQ_KICK, {}) or {}  # canal da Kick -> idioma das lives já vistas (o clipe não informa)
 
     # ------------------------------------------------------ base
 
@@ -220,6 +319,51 @@ class Descobrir:
         except ErroApi as e:
             raise ValueError(f"Kick: {e}") from None
 
+    def _cat_kick(self, cat: dict) -> dict | None:
+        """A categoria da Kick com o mesmo nome da categoria da Twitch (ex.: "Grand Theft Auto VI (GTA)"). Guardada nas preferências."""
+        mapa = self.prefs.setdefault("kick_cats", {})
+        if mapa.get(cat["nome"]):
+            return mapa[cat["nome"]]
+        alvo = _norm_cat(cat["nome"])
+        try:
+            _, dados = self._cache(f"kickcat:{alvo}", 86400, lambda: canais._kick_get(
+                f"{canais_mod.KICK_API.replace('/v1', '/v2')}/categories?" + urllib.parse.urlencode({"name": cat["nome"], "limit": 25})).get("data") or [])
+        except ErroApi as e:
+            raise ValueError(f"Kick: {e}") from None
+        c = next((c for c in dados if _norm_cat(c.get("name", "")) == alvo), None)
+        if not c:
+            return None
+        achado = {"id": c["id"], "nome": c["name"], "slug": "-".join(re.findall(r"[a-z0-9]+", re.sub(r"\([^)]*\)", "", c["name"].lower())))}
+        with self.trava:
+            mapa[cat["nome"]] = achado
+            self._salvar("prefs")
+        return achado
+
+    def _lives_kick(self, cat: dict, idioma: str, rp: bool, limite: int = 25) -> tuple[list[dict], int, str]:
+        """Lives da Kick na categoria, das mais assistidas para as menos (API oficial). Devolve (lives, analisadas, erro)."""
+        if not self._kick_ok():
+            return [], 0, "Informe o Client ID e o Client Secret da Kick em Configurações para ver as lives da Kick."
+        try:
+            kc = self._cat_kick(cat)
+            if not kc:
+                return [], 0, f"A Kick não tem a categoria “{cat['nome']}”."
+            p = [("category_id", kc["id"]), ("sort", "viewer_count"), ("limit", str(100 if rp else limite))] + ([("language", idioma)] if idioma and idioma != "other" else [])
+            dados = canais._kick_get(f"{canais_mod.KICK_API}/livestreams?" + urllib.parse.urlencode(p)).get("data") or []
+        except (ErroApi, ValueError) as e:
+            return [], 0, str(e) if str(e).startswith("Kick") else f"Kick: {e}"
+        lives = []
+        for s in dados:
+            if s.get("slug") and s.get("language"):
+                self.kick_idiomas[s["slug"].lower()] = s["language"].lower()
+            motivo = _motivo_rp({"tags": s.get("custom_tags") or [], "title": s.get("stream_title") or ""}) if rp else ""
+            if not rp or motivo:
+                lives.append(_live_kick(s, motivo))
+        try:
+            _gravar_compacto(ARQ_KICK, dict(list(self.kick_idiomas.items())[-20000:]))
+        except OSError:
+            pass
+        return lives, len(dados), ""
+
     def estado(self, _=None) -> dict:
         tw = canais.cfg["twitch"]
         return {"twitch": {"client_id": bool(tw.get("client_id")), "conectado": bool(tw.get("access_token")), "login": tw.get("login", "")},
@@ -289,7 +433,8 @@ class Descobrir:
                 cursor = (r.get("pagination") or {}).get("cursor")
                 if len(achadas) >= 5 or not cursor:
                     break
-            return {"lives": achadas[:5], "analisadas": vistas}
+            kick, kvistas, kerro = self._lives_kick(cat, idioma, rp)
+            return {"lives": achadas[:5], "analisadas": vistas, "kick": kick[:5], "kick_analisadas": kvistas, "kick_erro": kerro}
 
         quando, dados = self._cache(f"lives:{cat['id']}:{int(rp)}:{idioma}", CACHE_LISTA, buscar, forcar)
         with self.trava:
@@ -297,8 +442,11 @@ class Descobrir:
                 self.prefs.update(atual=cat["id"], rp=rp, idioma=idioma)
                 self._salvar("prefs")
         favs, mons = self._ids_favoritos(), {m["user_id"] for m in self.monitor["canais"]}
+        favs_k = {k["login"].lower() for c in self.criadores for k in c["contas"] if k["plataforma"] == "kick"}
         return {"categoria": cat, "salva": any(c.get("id") == cat["id"] for c in self.prefs["categorias"]), "rp": rp, "idioma": idioma,
-                "lives": [{**l, "favorito": l["user_id"] in favs, "monitorado": l["user_id"] in mons} for l in dados["lives"]],
+                "lives": [{**l, "plataforma": "twitch", "favorito": l["user_id"] in favs, "monitorado": l["user_id"] in mons} for l in dados["lives"]],
+                "kick": [{**l, "favorito": l["login"].lower() in favs_k, "monitorado": f"kick:{l['login'].lower()}" in mons} for l in dados.get("kick", [])],
+                "kick_analisadas": dados.get("kick_analisadas", 0), "kick_erro": dados.get("kick_erro", ""),
                 "analisadas": dados["analisadas"], "atualizado": quando, "proxima": quando + CACHE_LISTA, "agora": time.time(), "limite": _limite()}
 
     # ------------------------------------------------------ clipes e amostras
@@ -318,6 +466,13 @@ class Descobrir:
                     break
         self._amostrar(achados.values(), agora)
         return sorted(achados.values(), key=lambda c: -c["views"])
+
+    def _buscar_mais(self, alvos: list[tuple], extras: list[tuple], segundos: int, paginas: int, reserva: int = RESERVA_TELA) -> list[dict]:
+        """Amostra da categoria + uma página (100) de cada canal extra, sem repetir clipe."""
+        lista = {c["id"]: c for c in self._buscar_clips(alvos, segundos, paginas, reserva)}
+        if extras:
+            lista.update({c["id"]: c for c in self._buscar_clips(extras, segundos, 1, reserva)})
+        return sorted(lista.values(), key=lambda c: -c["views"])
 
     def _amostrar(self, clips, agora: float) -> None:
         with self.trava:
@@ -381,6 +536,8 @@ class Descobrir:
             raise ValueError("Idioma inválido.")
         if intervalo not in INTERVALOS:
             raise ValueError("Intervalo inválido. Use 1h, 6h, 24h ou 7d.")
+        if _q(consulta, "plataforma") == "kick":
+            return self._clips_kick(consulta, intervalo, origem, idioma, forcar)
         paginas = 1
         if origem == "criador":
             cri = self._achar(_q(consulta, "criador"))
@@ -396,16 +553,76 @@ class Descobrir:
         else:
             cat = self._categoria(_q(consulta, "categoria") or self.prefs.get("atual") or CATEGORIA_PADRAO)
             alvos, titulo, paginas = [("game_id", cat["id"])], f"Categoria {cat['nome']}", 5 if idioma else 2
-        chave = f"clips:{'|'.join(f'{a}={b}' for a, b in alvos)}:{intervalo}:{paginas}"
-        quando, lista = self._cache(chave, CACHE_LISTA, lambda: self._buscar_clips(alvos, INTERVALOS[intervalo], paginas), forcar)
+        extras: list[tuple] = []
+        if origem == "categoria" and idioma:
+            # A Twitch entrega os clipes da categoria de TODOS os idiomas, do mais visto para o menos visto, e o filtro de idioma
+            # é feito aqui. Em 24h/7d os 500 primeiros são quase todos de outros idiomas: por isso busca também, direto, os
+            # clipes dos 15 canais desse idioma mais assistidos agora na categoria.
+            try:
+                vivos = self._tw("/streams", [("game_id", cat["id"]), ("language", idioma), ("type", "live"), ("first", "15")]).get("data") or []
+                extras = [("broadcaster_id", s["user_id"]) for s in vivos]
+            except ValueError:
+                extras = []
+        chave = f"clips:{'|'.join(f'{a}={b}' for a, b in alvos)}:{intervalo}:{paginas}:{len(extras)}"
+        quando, lista = self._cache(chave, CACHE_LISTA, lambda: self._buscar_mais(alvos, extras, INTERVALOS[intervalo], paginas), forcar)
         with self.trava:
-            self.acompanhadas[chave] = {"alvos": alvos, "segundos": INTERVALOS[intervalo], "paginas": paginas, "visto": time.time()}
+            self.acompanhadas[chave] = {"alvos": alvos, "extras": extras, "segundos": INTERVALOS[intervalo], "paginas": paginas, "visto": time.time()}
         total = len(lista)
         if idioma:  # a Twitch não filtra clipes por idioma: o filtro é feito aqui, sobre os mais vistos
             lista = [c for c in lista if (c.get("idioma") or "").lower().startswith(idioma)]
             titulo += f" · idioma {idioma.upper()} ({len(lista)} de {total})"
         return {"clips": self._enfeitar(lista), "titulo": titulo, "intervalo": intervalo, "origem": origem, "limite_paginas": paginas * 100, "idioma": idioma,
                 "atualizado": quando, "proxima": quando + CACHE_LISTA, "agora": time.time(), "limite": _limite()}
+
+    def _buscar_kick(self, caminhos: list[str], consultas: list[tuple], segundos: int, extras: list[str] | None = None) -> list[dict]:
+        """extras: canais buscados só com a primeira consulta (os mais vistos do período), para não pesar no site da Kick."""
+        agora, achados = time.time(), {}
+        for caminho, lista in [(c, consultas) for c in caminhos] + [(c, consultas[:1]) for c in extras or []]:
+            for ordem, tempo in lista:
+                for d in _kick_site(caminho, {"sort": ordem, "time": tempo}).get("clips") or []:
+                    c = _clip_kick(d)
+                    if agora - _ts(c["criado"]) <= segundos:
+                        achados[c["id"]] = c
+        self._amostrar(achados.values(), agora)
+        return sorted(achados.values(), key=lambda c: -c["views"])
+
+    def _clips_kick(self, consulta: dict, intervalo: str, origem: str, idioma: str, forcar: bool) -> dict:
+        if origem == "criador":
+            cri = self._achar(_q(consulta, "criador"))
+            contas = [k["login"].lower() for k in cri["contas"] if k["plataforma"] == "kick"]
+            if not contas:
+                raise ValueError(f"{cri['nome']} não tem conta da Kick associada. Em Favoritos, use Adicionar conta.")
+            caminhos, titulo = [f"/channels/{l}/clips" for l in contas[:3]], f"{cri['nome']} na Kick ({', '.join(contas[:3])})"
+        elif origem == "canal":
+            canal = _q(consulta, "canal").lower()
+            if not RE_KICK.fullmatch(canal):
+                raise ValueError("Canal da Kick inválido.")
+            caminhos, titulo = [f"/channels/{canal}/clips"], f"{_q(consulta, 'nome') or canal} na Kick"
+        else:
+            cat = self._categoria(_q(consulta, "categoria") or self.prefs.get("atual") or CATEGORIA_PADRAO)
+            kc = self._cat_kick(cat)
+            if not kc:
+                raise ValueError(f"A Kick não tem a categoria “{cat['nome']}”.")
+            caminhos, titulo = [f"/categories/{kc['slug']}/clips"], f"Kick · {kc['nome']}"
+        extras: list[str] = []
+        if origem == "categoria" and idioma:
+            # O clipe da Kick não traz idioma e a lista da categoria é dominada por outros idiomas: busca também, direto,
+            # os clipes dos 10 canais desse idioma mais assistidos agora na categoria (e aprende o idioma deles).
+            _, vivos = self._cache(f"kickvivos:{kc['id']}:{idioma}", 600, lambda: self._lives_kick(cat, idioma, False, 100)[0])
+            extras = [f"/channels/{l['login'].lower()}/clips" for l in vivos[:10]]
+        consultas = KICK_CONSULTAS.get(intervalo, KICK_CONSULTAS_PADRAO)
+        chave = f"kclips:{'|'.join(caminhos)}:{intervalo}:{len(extras)}"
+        quando, lista = self._cache(chave, CACHE_LISTA, lambda: self._buscar_kick(caminhos, consultas, INTERVALOS[intervalo], extras), forcar)
+        with self.trava:
+            self.acompanhadas[chave] = {"plataforma": "kick", "caminhos": caminhos, "extras": extras, "consultas": consultas, "segundos": INTERVALOS[intervalo], "visto": time.time()}
+        for c in lista:
+            c["idioma"] = self.kick_idiomas.get(c["canal_login"].lower(), "")
+        total = len(lista)
+        if idioma and origem == "categoria":
+            lista = [c for c in lista if c["idioma"].startswith(idioma)]
+            titulo += f" · idioma {idioma.upper()} ({len(lista)} de {total}; a Kick não informa o idioma do clipe: vale o das lives desses canais já vistas pelo Vice Clips)"
+        return {"clips": self._enfeitar(lista), "titulo": titulo, "intervalo": intervalo, "origem": origem, "plataforma": "kick", "limite_paginas": total,
+                "idioma": idioma, "atualizado": quando, "proxima": quando + CACHE_LISTA, "agora": time.time(), "limite": _limite()}
 
     # ------------------------------------------------------ criadores favoritos
 
@@ -564,12 +781,15 @@ class Descobrir:
                 "candidatos": [{**c, "associado": (c["plataforma"], c.get("id") or c["login"]) in ja} for c in lista[:12]]}
 
     def favoritar(self, d: dict) -> dict:
-        conta = self._usuario_twitch(str(d.get("user_id") or ""), "")
+        plat = "kick" if d.get("plataforma") == "kick" else "twitch"
+        conta = self._resolver_conta({"plataforma": "kick", "login": d.get("login")}) if plat == "kick" else self._usuario_twitch(str(d.get("user_id") or ""), "")
+        mesma = (lambda k: k["plataforma"] == "kick" and k["login"].lower() == conta["login"].lower()) if plat == "kick" \
+            else (lambda k: k["plataforma"] == "twitch" and k.get("id") == conta["id"])
         with self.trava:
             for c in self.criadores:
-                if any(k["plataforma"] == "twitch" and k.get("id") == conta["id"] for k in c["contas"]):
+                if any(mesma(k) for k in c["contas"]):
                     return {"criador": c, "novo": False}
-            cri = next((c for c in self.criadores if _slug(c["nome"]) == conta["login"] and not any(k["plataforma"] == "twitch" for k in c["contas"])), None)
+            cri = next((c for c in self.criadores if _slug(c["nome"]) == _slug(conta["login"]) and not any(k["plataforma"] == plat for k in c["contas"])), None)
             if cri is None:
                 cri = {"id": _novo_id(), "nome": conta["nome"], "contas": [], "criado": time.time()}
                 self.criadores.append(cri)
@@ -582,6 +802,19 @@ class Descobrir:
     # ------------------------------------------------------ monitoramento e fila de revisão
 
     def monitor_adicionar(self, d: dict) -> dict:
+        if d.get("plataforma") == "kick" or "kick.com/" in str(d.get("login") or ""):
+            conta = self._resolver_conta({"plataforma": "kick", "login": d.get("login")})
+            ident = f"kick:{conta['login'].lower()}"
+            with self.trava:
+                if any(m["user_id"] == ident for m in self.monitor["canais"]):
+                    raise ValueError("Esse canal já está sendo monitorado.")
+                if len(self.monitor["canais"]) >= MAX_MONITOR:
+                    raise ValueError(f"O limite é de {MAX_MONITOR} lives monitoradas. Remova uma para adicionar outra.")
+                self.monitor["canais"].append({"plataforma": "kick", "user_id": ident, "login": conta["login"].lower(), "nome": conta["nome"], "foto": "", "desde": time.time()})
+                self._salvar("monitor")
+            self.ultimo["status"] = self.ultimo["monitor"] = 0
+            self.acordar.set()
+            return self.monitor_listar()
         ident, login = str(d.get("user_id") or ""), str(d.get("login") or "").strip().lower()
         login = re.sub(r"^https?://(www\.)?twitch\.tv/", "", login).strip("/@ ").split("/")[0]
         if not ident and any(m["login"] == login for m in self.monitor["canais"]):
@@ -606,7 +839,7 @@ class Descobrir:
         return self.monitor_listar()
 
     def monitor_listar(self, _=None) -> dict:
-        canais_m = [{**m, **self.mon.get(m["user_id"], {}), "status": self.status.get(f"twitch:{m['user_id']}")} for m in self.monitor["canais"]]
+        canais_m = [{**m, "plataforma": m.get("plataforma", "twitch"), **self.mon.get(m["user_id"], {}), "status": self.status.get(_chave_mon(m))} for m in self.monitor["canais"]]
         registro = {c["id"]: c for c in canais.cfg["clips"]}
         fila_r = []
         for item in self.monitor["fila"][::-1]:
@@ -615,7 +848,7 @@ class Descobrir:
             fila_r.append({**item, "estado": estado, "crescimento": self._crescimento(item["id"]),
                            "registro": {"acesso": r.get("acesso", ""), "importado": r.get("importado", "")} if r else None})
         conta = {k: sum(1 for i in fila_r if i["estado"] == k) for k in ("pendente", "importado", "descartado")}
-        ids = {m["user_id"] for m in self.monitor["canais"]}
+        ids = {m["user_id"] for m in self.monitor["canais"]} | {m["login"] for m in self.monitor["canais"] if m.get("plataforma") == "kick"}
         return {"canais": canais_m, "max": MAX_MONITOR, "fila": fila_r, "contagem": conta, "agora": time.time(),
                 "eventos": [e for e in self.eventos[::-1] if e.get("conta_id") in ids][:30],
                 "proximo": {"status": self.ultimo["status"] + STATUS_CADA, "clips": self.ultimo["monitor"] + MONITOR_CADA},
@@ -677,28 +910,38 @@ class Descobrir:
         if not cid:
             raise ValueError("Clipe inválido.")
         titulo, canal = str(d.get("titulo") or "")[:200], str(d.get("canal") or "")[:60]
+        kick = d.get("plataforma") == "kick"
+        return fila.adicionar("corte", f"Editando o clipe de {canal or ('Kick' if kick else 'Twitch')}",
+                              lambda t: _clipe_para_corte(cid, kick, titulo, canal, t), f"editar:{cid}").publico()
 
-        def trabalho(t):
-            import subprocess
-            import sys as _sys
-            from . import vods
-            from .fontes import YTDLP
-            pasta = DADOS / "clipes"
-            pasta.mkdir(parents=True, exist_ok=True)
-            arquivo = pasta / f"{cid}.mp4"
-            if not arquivo.is_file():
-                t.avancar(0.1, "Baixando o clipe")
-                r = subprocess.run([*YTDLP, "-f", "best[ext=mp4]/best", "-o", str(arquivo), f"https://clips.twitch.tv/{cid}"],
-                                   capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                   creationflags=subprocess.CREATE_NO_WINDOW if _sys.platform == "win32" else 0)
-                if r.returncode != 0 or not arquivo.is_file():
-                    erro = (r.stderr.strip().splitlines() or ["erro desconhecido"])[-1]
-                    raise RuntimeError(f"A Twitch não entregou o clipe: {erro[:200]}")
-            info = vods.abrir_arquivo(str(arquivo))
-            t.avancar(0.4, "Criando o corte")
-            return vods.criar_corte({"tipo": "arquivo", "id": info["id"], "inicio": 0, "fim": max(1.0, info["duracao"] - 0.05),
-                                     "titulo": titulo, "streamer": canal}, t)
-        return fila.adicionar("corte", f"Editando o clipe de {canal or 'Twitch'}", trabalho, f"editar:{cid}").publico()
+    def modelos(self, _=None) -> dict:
+        """O que dá para usar na renderização automática: layouts salvos por streamer e templates salvos no editor."""
+        from . import editor
+        streamers = ler_json(editor.ARQ_STREAMERS, {}) or {}
+        return {"streamers": sorted(k for k, v in streamers.items() if isinstance(v, dict) and v.get("layout")),
+                "templates": [t.get("nome") for t in editor.templates() if t.get("nome")]}
+
+    def gerar_conteudo(self, d: dict) -> dict:
+        """Clipes em alta -> conteúdo: baixa cada clipe, cria o corte e renderiza o Reel no layout do streamer (ou num template salvo),
+        com o título do clipe na manchete. Sem layout, para no corte: o template é escolhido no editor."""
+        if not d.get("autorizado"):
+            raise ValueError("Confirme que você tem autorização para usar estes clipes.")
+        itens = [x for x in (d.get("clips") or []) if isinstance(x, dict)][:20]
+        if not itens:
+            raise ValueError("Nenhum clipe para gerar.")
+        modelo = str(d.get("modelo") or "streamer")[:40]
+        tarefas = []
+        for x in itens:
+            cid = re.sub(r"[^\w-]", "", str(x.get("id") or ""))[:120]
+            if not cid:
+                continue
+            kick, titulo, canal = x.get("plataforma") == "kick", str(x.get("titulo") or "")[:200], str(x.get("canal") or "")[:60]
+
+            def trabalho(t, cid=cid, kick=kick, titulo=titulo, canal=canal):
+                r = _clipe_para_corte(cid, kick, titulo, canal, t)
+                return {**r, **_renderizar_no_modelo(r["corte"], modelo, titulo, canal, t)} if modelo != "nenhum" else r
+            tarefas.append(fila.adicionar("corte", f"Conteúdo: {titulo or cid} ({canal})", trabalho, f"conteudo:{cid}").publico())
+        return {"tarefas": tarefas, "modelo": modelo}
 
     # ------------------------------------------------------ trabalho de fundo
 
@@ -756,7 +999,10 @@ class Descobrir:
                 elif k["plataforma"] == "kick" and k.get("login"):
                     kick[k["login"]] = (k, c["id"])
         for m in self.monitor["canais"]:
-            alvos.setdefault(m["user_id"], ({"id": m["user_id"], "login": m["login"], "nome": m["nome"]}, ""))
+            if m.get("plataforma") == "kick":
+                kick.setdefault(m["login"], ({"login": m["login"], "nome": m["nome"]}, ""))
+            else:
+                alvos.setdefault(m["user_id"], ({"id": m["user_id"], "login": m["login"], "nome": m["nome"]}, ""))
         mudou = False
         if alvos:
             online, ids = {}, list(alvos)
@@ -793,14 +1039,19 @@ class Descobrir:
     def _checar_monitorados(self) -> None:
         novos_total = 0
         for m in list(self.monitor["canais"]):
-            st = self.status.get(f"twitch:{m['user_id']}") or {}
+            st = self.status.get(_chave_mon(m)) or {}
             e = self.mon.setdefault(m["user_id"], {})
             e.update(online=st.get("online"), ultimo_status=st.get("visto"))
             if not st.get("online") or not st.get("inicio"):
                 continue
             try:
                 achados, cursor = {}, None
-                for _ in range(3):  # clipes criados desde o início desta live
+                if m.get("plataforma") == "kick":  # os 20 clipes mais recentes do dia, só os desta live
+                    for d in _kick_site(f"/channels/{m['login']}/clips", {"sort": "date", "time": "day"}).get("clips") or []:
+                        c = _clip_kick(d)
+                        if _ts(c["criado"]) >= _ts(st["inicio"]):
+                            achados[c["id"]] = c
+                for _ in range(0 if m.get("plataforma") == "kick" else 3):  # clipes criados desde o início desta live
                     p = [("broadcaster_id", m["user_id"]), ("started_at", st["inicio"]), ("first", "100")]
                     r = self._tw("/clips", p + ([("after", cursor)] if cursor else []), RESERVA_FUNDO)
                     for d in r.get("data") or []:
@@ -835,7 +1086,13 @@ class Descobrir:
                 del self.acompanhadas[k]
             fila_a = sorted(self.acompanhadas.items(), key=lambda kv: -kv[1]["visto"])[:4]
         for chave, a in fila_a:
-            lista = self._buscar_clips(a["alvos"], a["segundos"], a["paginas"], RESERVA_FUNDO)
+            if a.get("plataforma") == "kick":
+                try:
+                    lista = self._buscar_kick(a["caminhos"], a["consultas"], a["segundos"], a.get("extras"))
+                except ValueError:
+                    continue
+            else:
+                lista = self._buscar_mais(a["alvos"], a.get("extras") or [], a["segundos"], a["paginas"], RESERVA_FUNDO)
             with self.trava:
                 self.cache[chave] = (time.time(), lista)
 
@@ -893,6 +1150,10 @@ def sugestoes(consulta: dict) -> dict:
     idioma = _q(consulta, "idioma", "pt").lower() or "en"
     if idioma not in ("pt", "en", "es"):
         idioma = "en"
+    if _q(consulta, "plataforma") == "kick":
+        with _trava_sug:
+            nomes = list(_ler_sugestoes()["nomes"].get(idioma) or SUGESTOES_INICIAIS.get(idioma, []))
+        return descobrir._cache(f"sugkick:{idioma}:{'|'.join(nomes)}", CACHE_LISTA, lambda: _sugestoes_kick(idioma, nomes))[1]
     with _trava_sug:
         d = _ler_sugestoes()
         nomes = d["nomes"].setdefault(idioma, list(SUGESTOES_INICIAIS.get(idioma, [])))
@@ -915,6 +1176,38 @@ def sugestoes(consulta: dict) -> dict:
         {"id": s["user_id"], "login": s["user_login"], "nome": s["user_name"], "espectadores": int(s["viewer_count"]), "jogo": s.get("game_name", "")}
         for s in descobrir._tw("/streams", [("language", idioma), ("type", "live"), ("first", "20")]).get("data") or []])[1]
     return {"idioma": idioma, "sugeridos": lista, "em_alta": quente}
+
+
+def _sugestoes_kick(idioma: str, nomes: list[str]) -> dict:
+    """Os mesmos criadores sugeridos, procurados na Kick pelo nome do canal (API oficial), + quem tem mais audiência agora nesse idioma."""
+    if not descobrir._kick_ok():
+        raise ValueError("Informe o Client ID e o Client Secret da Kick em Configurações.")
+    cand: dict[str, str] = {}
+    for n in nomes:
+        base, _, login = n.partition("=")
+        palavras = [_slug(p) for p in base.split() if _slug(p)]
+        for s in dict.fromkeys(["".join(palavras), "-".join(palavras), "_".join(palavras), login.strip().lower()]):
+            if RE_KICK.fullmatch(s):
+                cand.setdefault(s, n)
+    slugs, achados = list(cand), {}
+    for i in range(0, len(slugs), 50):
+        for c in descobrir._kick(slugs[i:i + 50]):
+            achados[str(c.get("slug", "")).lower()] = c
+    lista = []
+    for n in nomes:
+        c = next((achados[s] for s, quem in cand.items() if quem == n and s in achados), None)
+        if c:
+            s = c.get("stream") or {}
+            lista.append({"id": c["slug"], "login": c["slug"], "nome": n.partition("=")[0].strip(), "plataforma": "kick", "busca": n, "manual": True,
+                          "ao_vivo": bool(s.get("is_live")), "espectadores": int(s.get("viewer_count") or 0), "jogo": (c.get("category") or {}).get("name", "")})
+    lista.sort(key=lambda c: (not c["ao_vivo"], -c["espectadores"]))
+    try:
+        vivos = canais._kick_get(f"{canais_mod.KICK_API}/livestreams?" + urllib.parse.urlencode({"language": idioma, "sort": "viewer_count", "limit": 20})).get("data") or []
+    except ErroApi:
+        vivos = []
+    quente = [{"id": s["slug"], "login": s["slug"], "nome": s["slug"], "espectadores": int(s.get("viewer_count") or 0), "foto": s.get("profile_picture") or "",
+               "jogo": (s.get("category") or {}).get("name", ""), "plataforma": "kick"} for s in vivos]
+    return {"idioma": idioma, "plataforma": "kick", "sugeridos": lista, "em_alta": quente}
 
 
 def sugestao_editar(d: dict) -> dict:
@@ -968,6 +1261,7 @@ GET: dict = {caminho: _rota(f) for caminho, f in {
     "/api/descobrir/monitor": descobrir.monitor_listar,
     "/api/descobrir/analise": lambda _: {**analisador.estado(), "captura": captura.estado()},
     "/api/descobrir/sugestoes": sugestoes,
+    "/api/descobrir/modelos": descobrir.modelos,
 }.items()}
 
 POST: dict = {caminho: _rota(f) for caminho, f in {
@@ -990,4 +1284,8 @@ POST: dict = {caminho: _rota(f) for caminho, f in {
     "/api/descobrir/aovivo/iniciar": captura.iniciar,
     "/api/descobrir/clip/editar": descobrir.editar_clipe,
     "/api/descobrir/aovivo/parar": lambda _: captura.parar(),
+    "/api/descobrir/clips/conteudo": descobrir.gerar_conteudo,
+    "/api/descobrir/aovivo/clipar": lambda d: captura.clipar(d, fila),
+    "/api/descobrir/aovivo/momento": lambda d: captura.cortar_momento(d, fila),
+    "/api/descobrir/aovivo/auto": captura.configurar_auto,
 }.items()}

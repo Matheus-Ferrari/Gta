@@ -83,10 +83,12 @@
     ['Importar (oficial) (GET /clips/downloads)', 'Escopo editor:manage:clips (ou channel:manage:clips) e ser o dono do canal ou editor dele. Sem isso a Twitch responde 403 e o clipe fica como Só link. Os links de download são temporários.'],
     ['Importar arquivo autorizado', 'Arquivo do PC que você tem direito de usar (enviado pelo criador, por exemplo). Nada é baixado da Twitch.'],
     ['Vídeo da live ao vivo', 'Nenhuma API de listagem dá acesso. A análise em janelas só usa um arquivo seu (a gravação do OBS).'],
-    ['Kick', 'Client ID e Client Secret em Configurações para status e IDs. A API oficial da Kick não tem clipes.'],
+    ['Kick: lives, status e IDs', 'API oficial da Kick (Client ID e Client Secret em Configurações). Lista as lives por categoria e idioma, das mais assistidas para as menos.'],
+    ['Kick: clipes', 'A API oficial da Kick não tem clipes. O Vice Clips usa os endereços públicos do site da Kick: 20 clipes por consulta, sem paginação (junta os mais vistos e os mais recentes do período). O clipe não informa o idioma: vale o das lives do canal já vistas.'],
+    ['Kick: criar clip', 'Não existe API para criar clipe na Kick. Use Gravar e clipar: a live é gravada no seu PC e Clipar agora corta os últimos 30 ou 60 s.'],
     ['Limite de pedidos', 'Balde de pontos por app e usuário (cabeçalhos Ratelimit-*). Listas ficam 2 min em cache e o trabalho de fundo recua quando sobram menos de 100 pontos.'],
   ];
-  const permissoes = () => el('details', { className: 'card dc-permissoes' }, el('summary', { textContent: 'O que cada ação exige (API oficial da Twitch)' }),
+  const permissoes = () => el('details', { className: 'card dc-permissoes' }, el('summary', { textContent: 'O que cada ação exige (Twitch e Kick)' }),
     el('table', { className: 'permissoes' }, el('tbody', {}, ...PERMISSOES.map(([a, b]) => el('tr', {}, el('td', { textContent: a }), el('td', { textContent: b }))))));
 
   /* ---------- tela ---------- */
@@ -103,7 +105,7 @@
     const corpo = el('div', { id: 'dc-corpo' });
     tela().replaceChildren(...[
       el('header', { className: 'cabeca' }, el('h1', { textContent: 'Lives' }),
-        el('p', { textContent: 'Lives e clipes em alta pela API oficial da Twitch, seus criadores favoritos e as lives que você monitora. Nada é baixado sem você pedir.' })),
+        el('p', { textContent: 'Lives e clipes em alta da Twitch e da Kick, seus criadores favoritos, as lives que você monitora e a gravação ao vivo. Nada é baixado sem você pedir.' })),
       faixaConexao(), permissoes(),
       el('div', { className: 'filtros', role: 'tablist' }, ...ABAS.map(([id, t]) => chip(t, id === D.aba, () => { D.aba = id; desenhar(); }, { role: 'tab' })),
         chip('Meus canais', false, () => irPara('lives', { aba: 'vivo' }), { role: 'tab' }), chip('Clips criados', false, () => irPara('lives', { aba: 'clips' }), { role: 'tab' })),
@@ -126,6 +128,8 @@
     const cats = el('div', { className: 'filtros dc-cats' });
     const lista = el('div', { className: 'dc-lives' }, vazio('Carregando as lives...'));
     const rodape = el('p', { className: 'dica', style: 'margin:8px 0 0' });
+    const listaKick = el('div', { className: 'dc-lives' }, vazio('Carregando as lives da Kick...'));
+    const rodapeKick = el('p', { className: 'dica', style: 'margin:8px 0 0' });
     const salvar = el('span');
     const favs = el('div', { className: 'lista' }), eventos = el('div', { className: 'lista' });
     const opcoes = el('datalist', { id: 'dc-cats-sug' });
@@ -151,7 +155,8 @@
           { title: 'A API da Twitch não filtra por tag na consulta. O Vice Clips olha até 300 lives da categoria, das mais assistidas para as menos, e mantém as que têm tag RP, GTARP ou Roleplay, ou "RP" no título.' }),
         el('label', {}, 'Idioma', el('select', { onchange: e => { v.idioma = e.target.value; desenhar(); } }, ...IDIOMAS.map(([id, t]) => el('option', { value: id, textContent: t, selected: id === v.idioma })))),
         botao('Atualizar agora', acao(() => carregar(true))), salvar),
-      el('h2', { className: 'tit', textContent: 'Top 5 por espectadores' }), lista, rodape,
+      el('h2', { className: 'tit dc-tit-plat' }, 'Top 5 por espectadores · ', selo('twitch')), lista, rodape,
+      el('h2', { className: 'tit dc-tit-plat', style: 'margin-top:18px' }, 'Top 5 por espectadores · ', selo('kick')), listaKick, rodapeKick,
       el('div', { className: 'dc-duas' },
         el('section', { className: 'card bloco' }, el('h2', { className: 'tit', textContent: 'Favoritos ao vivo' }), favs),
         el('section', { className: 'card bloco' }, el('h2', { className: 'tit', textContent: 'Entradas e saídas do ar' }), eventos)));
@@ -167,6 +172,10 @@
           : [vazio(r.rp ? `Nenhuma live com tag ou título de RP entre as ${r.analisadas} mais assistidas de ${r.categoria.nome}.` : `Ninguém ao vivo em ${r.categoria.nome} agora.`)]));
         rodape.textContent = [`${r.categoria.nome}: ${r.analisadas} lives consultadas em GET /streams`, r.rp && 'filtro GTA RP feito pelo Vice Clips nas tags e no título',
           `atualizado às ${hora(r.atualizado)}`, `próxima atualização automática às ${hora(r.proxima)}`, limiteTxt(r.limite)].filter(Boolean).join(' · ');
+        const kick = r.kick || [];
+        listaKick.replaceChildren(...(kick.length ? kick.map((l, i) => cartaoLive(l, i, () => carregar()))
+          : [r.kick_erro ? caixaErro(r.kick_erro) : vazio(r.rp ? `Nenhuma live da Kick com tag ou título de RP entre as ${r.kick_analisadas} mais assistidas.` : `Ninguém ao vivo na Kick em ${r.categoria.nome} agora.`)]));
+        rodapeKick.textContent = r.kick_erro ? '' : `Kick: ${r.kick_analisadas} lives consultadas na API oficial (GET /livestreams), mesma categoria e idioma · na Kick não existe criar clip: use Gravar e clipar`;
         salvar.replaceChildren(r.salva ? '' : botao(`Salvar “${r.categoria.nome}”`, acao(async () => {
           await api('/api/descobrir/categorias', { acao: 'salvar', id: r.categoria.id });
           D.est = await api('/api/descobrir/estado'); salvar.replaceChildren(); desenharCats(r.categoria); avisar('Categoria salva.');
@@ -174,7 +183,7 @@
         agendar(() => carregar(), Math.max(15, r.proxima - r.agora + 1) * 1000);
       } catch (e) {
         if (!ativa(g)) return;
-        lista.replaceChildren(caixaErro(e.message)); rodape.textContent = '';
+        lista.replaceChildren(caixaErro(e.message)); rodape.textContent = ''; listaKick.replaceChildren(); rodapeKick.textContent = '';
         agendar(() => carregar(), 120000);
       }
     }
@@ -197,38 +206,43 @@
   }
   function cartaoLive(l, i, recarregar) {
     const rp = l.rp ? (l.rp.startsWith('tag') ? `RP pela ${l.rp}` : `RP pelo ${l.rp}`) : '';
+    const plat = l.plataforma || 'twitch', kick = plat === 'kick';
     return el('article', { className: 'card canal dc-live' },
-      el('a', { className: 'foto', href: l.link, target: '_blank', rel: 'noopener', title: 'Abrir a live na Twitch' },
-        l.thumb ? el('img', { src: `${l.thumb}?t=${Math.floor(Date.now() / 120000)}`, alt: '', loading: 'lazy' }) : null,
+      el('a', { className: 'foto', href: l.link, target: '_blank', rel: 'noopener', title: `Abrir a live na ${PLAT[plat]}` },
+        l.thumb ? el('img', { src: `${l.thumb}${l.thumb.includes('?') ? '&' : '?'}t=${Math.floor(Date.now() / 120000)}`, alt: '', loading: 'lazy' }) : null,
         el('span', { className: 'selo live', textContent: `AO VIVO · ${fmtNum(l.espectadores)}` }), el('span', { className: 'dc-pos', textContent: `#${i + 1}` })),
       el('div', { className: 'info' },
-        el('div', { className: 'topo-linha' }, el('h3', { textContent: l.nome }), selo('twitch')),
+        el('div', { className: 'topo-linha' }, el('h3', { textContent: l.nome }), selo(plat)),
         el('p', { className: 'sub', textContent: l.titulo || 'Sem título', title: l.titulo }),
         el('small', { className: 'dc-meta', textContent: [`${l.espectadores.toLocaleString('pt-BR')} espectadores`, l.inicio && `no ar ${ha(l.inicio)}`, l.idioma && l.idioma.toUpperCase(), rp].filter(Boolean).join(' · ') }),
         l.tags.length ? el('div', { className: 'dc-tags' }, ...l.tags.slice(0, 6).map(t => el('span', { textContent: t }))) : null,
         el('div', { className: 'ctrl' }, link('Abrir live', l.link, 'btn mini'),
           l.favorito ? botao('Nos favoritos', () => { D.aba = 'favoritos'; desenhar(); }, 'btn leve mini', { title: 'Ver na aba Favoritos' })
-            : botao('Favoritar', acao(async () => { const r = await api('/api/descobrir/favoritar', { user_id: l.user_id }); avisar(r.novo ? `${l.nome} entrou nos favoritos (${r.criador.nome}).` : 'Já estava nos favoritos.'); recarregar(); })),
-          botao('Analisar ao vivo', () => analisarAoVivo(l.login, l.nome, l.inicio), 'btn mini', { title: 'Grava esta live a partir de agora e sugere os melhores momentos enquanto ela acontece' }),
+            : botao('Favoritar', acao(async () => { const r = await api('/api/descobrir/favoritar', kick ? { plataforma: 'kick', login: l.login } : { user_id: l.user_id }); avisar(r.novo ? `${l.nome} entrou nos favoritos (${r.criador.nome}).` : 'Já estava nos favoritos.'); recarregar(); })),
+          botao(kick ? 'Gravar e clipar' : 'Analisar ao vivo', () => analisarAoVivo(l.login, l.nome, l.inicio, plat), 'btn mini', { title: 'Grava esta live a partir de agora, marca os melhores momentos e libera o Clipar agora' }),
+          kick ? botao('Ver clipes', () => { Object.assign(D.clips, { plataforma: 'kick', origem: 'canal', canal: l.login, nome: l.nome }); D.aba = 'clips'; desenhar(); }) : null,
           l.monitorado ? botao('Monitorando', () => { D.aba = 'monitor'; desenhar(); }, 'btn leve mini', { title: 'Ver na aba Monitoramento' })
-            : botao('Monitorar', acao(async () => { await api('/api/descobrir/monitor/adicionar', { user_id: l.user_id }); avisar(`Monitorando ${l.nome}: os clipes novos desta live vão para a fila de revisão.`); recarregar(); })))));
+            : botao('Monitorar', acao(async () => { await api('/api/descobrir/monitor/adicionar', kick ? { plataforma: 'kick', login: l.login } : { user_id: l.user_id }); avisar(`Monitorando ${l.nome}: os clipes novos desta live vão para a fila de revisão.`); recarregar(); })))));
   }
 
-  /* ---------- analisar ao vivo: grava a live e liga a análise em janelas ---------- */
-  function analisarAoVivo(login, nome, inicio) {
-    const d = el('dialog', { className: 'tpl-dlg', style: 'width:min(520px,calc(100vw - 32px))' });
+  /* ---------- gravar a live: grava, marca momentos (análise + chat) e libera Clipar agora ---------- */
+  function analisarAoVivo(login, nome, inicio, plataforma = 'twitch') {
+    const d = el('dialog', { className: 'tpl-dlg', style: 'width:min(540px,calc(100vw - 32px))' });
     const qual = el('select', {}, el('option', { value: '720', textContent: '720p (recomendado, ~1,5 GB por hora)', selected: true }), el('option', { value: '1080', textContent: '1080p (melhor para Reels, ~3 GB por hora)' }), el('option', { value: '480', textContent: '480p (leve, ~0,8 GB por hora)' }));
+    const auto = el('select', {}, ...[['0', 'Não: eu escolho o que vira corte'], ['60', 'Sim, momentos com nota 60 ou mais'], ['75', 'Sim, nota 75 ou mais (recomendado)'], ['90', 'Sim, só nota 90 ou mais']].map(([v, t]) => el('option', { value: v, textContent: t, selected: v === '0' })));
     const transc = el('input', { type: 'checkbox' }), aut = el('input', { type: 'checkbox' });
     d.append(el('div', { style: 'padding:18px;display:grid;gap:12px' },
-      el('h2', { className: 'tit', style: 'margin:0', textContent: `Analisar a live de ${nome}` }),
-      el('p', { className: 'dica', style: 'margin:0', textContent: 'O Vice Clips grava a live daqui para a frente (não pega o que já passou) e, a cada 25 s, procura picos de voz, gritos, risadas e mudanças de cena. Os melhores momentos aparecem em Monitoramento com nota e botão Criar corte, que corta direto da gravação.' }),
+      el('h2', { className: 'tit', style: 'margin:0' }, `Gravar a live de ${nome} `, selo(plataforma)),
+      el('p', { className: 'dica', style: 'margin:0', textContent: `O Vice Clips grava a live no seu PC daqui para a frente, então nenhum momento "passa": tudo fica na gravação. A cada 25 s ele procura picos de voz, gritos, risadas e mudanças de cena${plataforma === 'twitch' ? ' e lê o chat (acelerando, kkkk, pedindo "clipa")' : ''}. Os momentos aparecem com nota na barra de gravação, que fica visível em todas as telas, junto com Clipar agora (últimos 30 ou 60 s).` }),
       el('label', {}, 'Qualidade da gravação', qual),
+      el('label', {}, 'Clipar sozinho', auto),
       el('label', { className: 'marcar' }, transc, 'Transcrever os momentos (mostra a fala; usa a placa de vídeo)'),
       el('label', { className: 'marcar autoriza' }, aut, 'Tenho autorização para gravar e cortar esta live (meu canal, permissão do criador ou conteúdo liberado para cortes).'),
       el('div', { className: 'ferramentas', style: 'margin:0' },
         botao('Começar', acao(async () => {
-          await api('/api/descobrir/aovivo/iniciar', { login, qualidade: qual.value, transcrever: transc.checked, autorizado: aut.checked, inicio_live: inicio || '' });
-          d.close(); avisar(`Gravando a live de ${nome}. As sugestões aparecem em Monitoramento.`); D.aba = 'monitor'; desenhar();
+          await api('/api/descobrir/aovivo/iniciar', { login, plataforma, qualidade: qual.value, transcrever: transc.checked, autorizado: aut.checked, inicio_live: inicio || '', auto: Number(auto.value) });
+          d.close(); avisar(`Gravando a live de ${nome}. Use a barra de gravação para assistir, ver os momentos e clipar.`);
+          if (window.atualizarGravacao) window.atualizarGravacao();
         }), 'btn mini'),
         botao('Cancelar', () => d.close()))));
     d.addEventListener('close', () => d.remove());
@@ -265,7 +279,7 @@
       if (!aut.checked) { prog.textContent = 'Marque a autorização para continuar.'; return; }
       ir.disabled = true;
       try {
-        const t = await api('/api/descobrir/clip/editar', { id: x.id, titulo: x.titulo, canal: x.canal, autorizado: true });
+        const t = await api('/api/descobrir/clip/editar', { id: x.id, titulo: x.titulo, canal: x.canal_login || x.canal, plataforma: x.plataforma || 'twitch', autorizado: true });
         const r = await aguardarTarefa(t.id, y => { prog.textContent = `${y.mensagem} (${Math.round(y.progresso * 100)}%)`; });
         d.close(); irPara('editor', { corte: r.corte });
       } catch (e) { prog.textContent = e.message; prog.className = 'dica erro'; ir.disabled = false; }
@@ -293,8 +307,9 @@
   }
   function cartaoClipe(x, recarregar, extras = []) {
     const reg = x.registro || {}, cr = x.crescimento || {};
+    const kick = x.plataforma === 'kick';
     const importado = reg.importado, soLink = reg.acesso === 'so_link';
-    const ver = () => abrirClip({ id: x.id, url: x.url, titulo: x.titulo });
+    const ver = kick ? () => window.open(x.url, '_blank', 'noopener') : () => abrirClip({ id: x.id, url: x.url, titulo: x.titulo });
     return el('article', { className: 'card clip dc-clip' },
       el('button', { className: 'capa-clip', type: 'button', ariaLabel: 'Assistir ao clipe', onclick: ver },
         x.thumb ? el('img', { src: x.thumb, alt: '', loading: 'lazy' }) : el('span', { textContent: 'Sem miniatura' }),
@@ -311,15 +326,15 @@
             : el('span', { className: 'dc-espera', textContent: cr.texto || 'Aguardando segunda amostra' })),
         x.momento ? el('small', { className: 'dc-momento' + (x.ao_vivo ? ' vivo' : ''), title: x.vod_titulo || '',
           textContent: `Momento: ${dataHora(new Date(x.momento * 1000).toISOString())} · ${x.ao_vivo ? 'clipado ao vivo' : 'clipado depois, da gravação'}` })
-          : el('small', { className: 'dc-momento', textContent: 'Gravação indisponível: não dá para saber em que momento da live foi' }),
+          : el('small', { className: 'dc-momento', textContent: kick ? 'Clipe da Kick: abre na Kick ou vira corte com Baixar e editar' : 'Gravação indisponível: não dá para saber em que momento da live foi' }),
         el('small', { className: 'dica', style: 'margin:0', textContent: `Criado ${dataHora(x.criado)}${soLink ? ' · a Twitch só entrega o arquivo ao dono do canal e aos editores dele' : ''}` }),
         el('div', { className: 'ferramentas', style: 'margin:0' },
-          botao('Assistir', ver), link('Abrir link', x.url),
-          botao('Editar clipe', () => editarClipe(x), 'btn mini', { title: 'Baixa o clipe, cria o corte e abre no editor' }),
+          botao('Assistir', ver, 'btn leve mini', kick ? { title: 'Abre o clipe na Kick' } : {}), link('Abrir link', x.url),
+          botao(kick ? 'Baixar e editar' : 'Editar clipe', () => editarClipe(x), 'btn mini', { title: 'Baixa o clipe, cria o corte e abre no editor' }),
           x.vod_url ? botao('Cortar da gravação', () => cortarDaGravacao(x), 'btn leve mini', { title: 'Abre a gravação em Gerar Cortes com início e fim já marcados neste momento (com folga de 10 s)' }) : null,
           importado ? botao('Abrir no editor', () => irPara('editor', { corte: importado }), 'btn mini') : null,
-          !importado && !soLink ? botao('Importar (oficial)', importarOficial(x, recarregar), 'btn mini', { title: 'GET /clips/downloads: só funciona se você for o dono do canal ou editor dele. Sem permissão, o clipe fica como Só link.' }) : null,
-          !importado ? botao('Importar arquivo autorizado', importarArquivo(x, recarregar), 'btn leve mini', { title: 'Recebeu o arquivo do criador? Escolha o arquivo do PC e ele vira um corte editável.' }) : null,
+          !kick && !importado && !soLink ? botao('Importar (oficial)', importarOficial(x, recarregar), 'btn mini', { title: 'GET /clips/downloads: só funciona se você for o dono do canal ou editor dele. Sem permissão, o clipe fica como Só link.' }) : null,
+          !kick && !importado ? botao('Importar arquivo autorizado', importarArquivo(x, recarregar), 'btn leve mini', { title: 'Recebeu o arquivo do criador? Escolha o arquivo do PC e ele vira um corte editável.' }) : null,
           ...extras)));
   }
 
@@ -334,11 +349,15 @@
     if (!c.cat) c.cat = D.vivo.cat || (D.est && D.est.atual) || (cats[0] || {}).id || '';
     if (c.idioma === null) c.idioma = (D.est && D.est.idioma) || 'pt';
     c.faixa = c.faixa || 'sugeridos';
+    c.plataforma = c.plataforma || 'twitch';
+    const kick = c.plataforma === 'kick';
     const IDIOMAS = [['pt', 'Português'], ['en', 'Inglês'], ['es', 'Espanhol'], ['', 'Todos os idiomas']];
     const sel = (rot, valor, opcoes, mudar) => el('label', { className: 'dc-campo' }, rot, el('select', { onchange: e => mudar(e.target.value) },
       ...opcoes.map(([v, t]) => el('option', { value: v, textContent: t, selected: v === valor }))));
     const canalSel = el('label', { className: 'dc-campo', hidden: true });
     const barra = el('div', { className: 'dc-barra' },
+      el('div', { className: 'dc-campo' }, 'Plataforma', el('div', { className: 'dc-seg-grupo' }, ...[['twitch', 'Twitch'], ['kick', 'Kick']].map(([id, t]) => el('button', { type: 'button', textContent: t, ariaPressed: String(id === c.plataforma),
+        onclick: () => { Object.assign(c, { plataforma: id, origem: 'categoria', criador: '', canal: '', soCanal: '', semCanal: '' }); desenhar(); } })))),
       sel('Categoria', c.cat, cats.map(x => [x.id, x.nome]), v => { Object.assign(c, { origem: 'categoria', cat: v, soCanal: '', semCanal: '' }); desenhar(); }),
       sel('Idioma', c.idioma, IDIOMAS, v => { Object.assign(c, { idioma: v, soCanal: '', semCanal: '' }); desenhar(); }),
       el('div', { className: 'dc-campo' }, 'Período', el('div', { className: 'dc-seg-grupo' }, ...INTERVALOS.map(([id, t]) => el('button', { type: 'button', textContent: t.replace(' horas', 'h').replace(' hora', 'h').replace(' dias', 'd'), ariaPressed: String(id === c.intervalo), onclick: () => { c.intervalo = id; desenhar(); } })))),
@@ -350,11 +369,11 @@
     const foco = el('div', { className: 'dc-foco', hidden: c.origem === 'categoria' });
     const nomeFoco = () => (c.origem === 'canal' ? c.nome : ((D.criadores && D.criadores.criadores.find(x => x.id === c.criador)) || {}).nome || 'criador');
     if (c.origem !== 'categoria') foco.append(el('span', { textContent: `Clipes das lives de ${nomeFoco()}${c.quem === 'proprio' ? ', feitos por ele mesmo' : c.quem === 'comunidade' ? ', feitos por espectadores' : ''} · ${PERIODO[c.intervalo]}` }), botao('Voltar para todos os canais', () => { Object.assign(c, { origem: 'categoria', criador: '', canal: '' }); desenhar(); }));
-    const verCanal = k => { Object.assign(c, { origem: 'canal', canal: k.id, nome: k.nome || k.login, soCanal: '', semCanal: '' }); desenhar(); };
+    const verCanal = k => { Object.assign(c, { origem: 'canal', canal: kick ? k.login : k.id, nome: k.nome || k.login, soCanal: '', semCanal: '' }); desenhar(); };
     const verCriador = x => { Object.assign(c, { origem: 'criador', criador: x.id, soCanal: '', semCanal: '' }); desenhar(); };
-    const ativo = k => (c.origem === 'canal' && c.canal === k.id);
+    const ativo = k => (c.origem === 'canal' && c.canal === (kick ? k.login : k.id));
     const pessoa = (k, clique, extra = '') => el('button', { className: 'dc-pessoa' + (k.ao_vivo ? ' vivo' : '') + extra, type: 'button', ariaPressed: String(ativo(k)), onclick: clique,
-      title: [k.login && `twitch.tv/${k.login}`, k.seguidores ? `${fmtNum(k.seguidores)} seguidores` : '', k.jogo].filter(Boolean).join(' · ') },
+      title: [k.login && `${kick ? 'kick.com' : 'twitch.tv'}/${k.login}`, k.seguidores ? `${fmtNum(k.seguidores)} seguidores` : '', k.jogo].filter(Boolean).join(' · ') },
       k.foto ? el('img', { src: k.foto, alt: '', loading: 'lazy' }) : el('i', { textContent: (k.nome || k.login || '?').slice(0, 1).toUpperCase() }),
       el('span', { textContent: k.nome || k.login }), k.ao_vivo || k.espectadores ? el('small', { textContent: fmtNum(k.espectadores) }) : null);
     function pintarFaixa(r) {
@@ -368,8 +387,9 @@
           el('button', { className: 'dc-x', type: 'button', title: 'Tirar da lista', textContent: '×', onclick: acao(async () => { await api('/api/descobrir/sugestoes/editar', { idioma: r.idioma, nome: k.busca, acao: 'remover' }); desenhar(); }) })) : p;
       });
       if (c.faixa === 'vivo') itens = r.em_alta.map(k => pessoa({ ...k, ao_vivo: true }, () => verCanal(k)));
-      if (c.faixa === 'favoritos') itens = ((D.criadores && D.criadores.criadores) || []).filter(x => x.contas.some(k => k.plataforma === 'twitch' && k.id)).map(x => {
-        const k = x.contas.find(q => q.plataforma === 'twitch' && q.id);
+      const temConta = q => (kick ? q.plataforma === 'kick' : q.plataforma === 'twitch' && q.id);
+      if (c.faixa === 'favoritos') itens = ((D.criadores && D.criadores.criadores) || []).filter(x => x.contas.some(temConta)).map(x => {
+        const k = x.contas.find(temConta);
         const b = pessoa({ nome: x.nome, foto: k.foto, login: k.login, ao_vivo: x.ao_vivo }, () => verCriador(x));
         b.ariaPressed = String(c.origem === 'criador' && c.criador === x.id); return b;
       });
@@ -379,25 +399,63 @@
       });
       faixa.replaceChildren(
         el('div', { className: 'dc-faixa-topo' }, el('div', { className: 'dc-seg-grupo' }, ...abas.map(([id, t]) => el('button', { type: 'button', textContent: t, ariaPressed: String(c.faixa === id), onclick: () => { c.faixa = id; pintarFaixa(r); } }))),
-          c.faixa === 'sugeridos' ? el('button', { className: 'dc-link', type: 'button', textContent: c.editar ? 'Pronto' : 'Editar lista', onclick: () => { c.editar = !c.editar; pintarFaixa(r); } }) : null,
+          c.faixa === 'sugeridos' && !kick ? el('button', { className: 'dc-link', type: 'button', textContent: c.editar ? 'Pronto' : 'Editar lista', onclick: () => { c.editar = !c.editar; pintarFaixa(r); } }) : null,
           c.faixa === 'sugeridos' && c.editar ? el('form', { className: 'dc-sug-add', onsubmit: acao(async ev => { ev.preventDefault(); const n = ev.target.n.value.trim(); if (!n) return; await api('/api/descobrir/sugestoes/editar', { idioma: r.idioma, nome: n }); desenhar(); }) },
             el('input', { name: 'n', placeholder: '+ adicionar criador', autocomplete: 'off', maxLength: 40 })) : null,
           c.editar && c.faixa === 'sugeridos' ? el('span', { className: 'dica', style: 'margin:0', textContent: '✎ corrige o canal, × tira da lista.' }) : null),
-        el('div', { className: 'dc-pessoas' }, todos, ...(itens.length ? itens : [el('span', { className: 'dica', style: 'margin:0', textContent: c.faixa === 'favoritos' ? 'Associe contas da Twitch em Favoritos.' : 'Ninguém aqui agora.' })])));
+        el('div', { className: 'dc-pessoas' }, todos, ...(itens.length ? itens : [el('span', { className: 'dica', style: 'margin:0', textContent: c.faixa === 'favoritos' ? `Associe contas da ${kick ? 'Kick' : 'Twitch'} em Favoritos.` : 'Ninguém aqui agora.' })])));
     }
-    api('/api/descobrir/sugestoes' + qs({ idioma: c.idioma || 'en' })).then(r => { if (ativa(g)) { D.sug = r; pintarFaixa(r); } })
+    api('/api/descobrir/sugestoes' + qs({ idioma: c.idioma || 'en', plataforma: kick ? 'kick' : '' })).then(r => { if (ativa(g)) { D.sug = r; pintarFaixa(r); } })
       .catch(e => { if (ativa(g)) faixa.replaceChildren(el('p', { className: 'dica erro', style: 'margin:0', textContent: e.message })); });
     const escolha = el('select');  // a lista de favoritos ainda é carregada aqui (vai para a faixa)
-    corpo.replaceChildren(barra, faixa, foco, info, grade, mais,
-      el('p', { className: 'dica', textContent: 'Só a Twitch tem API oficial de clipes. A Kick não oferece clipes pela API.' }));
+    const gerar = el('div', { className: 'dc-gerar' });
+    corpo.replaceChildren(barra, faixa, foco, el('div', { className: 'topo-linha dc-info-linha' }, info, gerar), grade, mais,
+      el('p', { className: 'dica', textContent: kick ? 'Clipes da Kick pelos endereços públicos do site (a API oficial da Kick não tem clipes): até 20 por consulta, juntando os mais vistos e os mais recentes do período.' : 'Clipes pela API oficial da Twitch.' }));
+    /* Gerar conteúdo: os primeiros N da lista do jeito que está filtrada e ordenada viram cortes (e Reels, se houver layout salvo). */
+    function botaoGerar(lista) {
+      gerar.replaceChildren(lista.length ? botao(`Gerar conteúdo dos Top ${Math.min(10, lista.length)}`, () => dialogoGerar(lista), 'btn mini', { title: 'Baixa os clipes do topo desta lista, cria os cortes e renderiza no template' }) : '');
+    }
+    async function dialogoGerar(lista) {
+      let m = { streamers: [], templates: [] };
+      try { m = await api('/api/descobrir/modelos'); } catch { /* segue sem a lista */ }
+      const canaisLista = [...new Set(lista.slice(0, 20).map(x => (x.canal_login || x.canal || '').toLowerCase()))];
+      const comLayout = canaisLista.filter(n => m.streamers.includes(n));
+      const qtd = el('select', {}, ...[5, 10, 20].filter(n => n <= Math.max(5, lista.length)).map(n => el('option', { value: n, textContent: `Top ${Math.min(n, lista.length)}`, selected: n === 10 })));
+      const modelo = el('select', {},
+        el('option', { value: 'streamer', textContent: comLayout.length ? `Layout salvo do streamer (${comLayout.join(', ')})` : 'Layout salvo do streamer (nenhum salvo ainda)', selected: !!comLayout.length }),
+        ...m.templates.map(t => el('option', { value: t, textContent: `Template: ${t}` })),
+        el('option', { value: 'nenhum', textContent: 'Só baixar e cortar (escolho o template no editor)', selected: !comLayout.length }));
+      const aut = el('input', { type: 'checkbox' });
+      const d = el('dialog', { className: 'tpl-dlg', style: 'width:min(540px,calc(100vw - 32px))' });
+      d.append(el('div', { style: 'padding:18px;display:grid;gap:12px' },
+        el('h2', { className: 'tit', style: 'margin:0', textContent: 'Gerar conteúdo dos clipes em alta' }),
+        el('p', { className: 'dica', style: 'margin:0', textContent: 'Pega os primeiros clipes desta lista, do jeito que está filtrada e ordenada. Cada um é baixado, vira corte em Meus Cortes e, com um layout salvo, já sai renderizado como Reel com o título do clipe na manchete.' }),
+        comLayout.length ? null : el('p', { className: 'dica', style: 'margin:0', textContent: 'Para renderizar sozinho: abra um corte deste streamer no editor, monte o template (ex.: Editorial Preto) e clique em “Salvar para este streamer”. Depois disso, todo lote sai pronto.' }),
+        el('label', {}, 'Quantos', qtd), el('label', {}, 'Template', modelo),
+        el('label', { className: 'marcar autoriza' }, aut, 'Tenho autorização para usar estes clipes (canal meu, permissão do criador ou conteúdo liberado para cortes).'),
+        el('div', { className: 'ferramentas', style: 'margin:0' },
+          botao('Gerar', acao(async () => {
+            const escolhidos = lista.slice(0, Number(qtd.value)).map(x => ({ id: x.id, plataforma: x.plataforma || 'twitch', titulo: x.titulo, canal: x.canal_login || x.canal }));
+            const r = await api('/api/descobrir/clips/conteudo', { clips: escolhidos, modelo: modelo.value, autorizado: aut.checked });
+            d.close(); avisar(`${r.tarefas.length} clipes na fila. Eles aparecem em Meus Cortes${modelo.value === 'nenhum' ? '' : ' (os Reels em “Reel exportado”)'}.`);
+          }), 'btn mini'),
+          botao('Cancelar', () => d.close()))));
+      d.addEventListener('close', () => d.remove());
+      document.body.append(d); d.showModal();
+    }
     let dados = null, mostrar = POR_PAGINA;
     function mostrarLista() {
       if (!dados) return;
       let lista = [...dados.clips], nota = '';
-      const porCanal = {}; lista.forEach(x => { porCanal[x.canal] = (porCanal[x.canal] || 0) + 1; });
+      const porCanal = {}, idCanal = {}; lista.forEach(x => { porCanal[x.canal] = (porCanal[x.canal] || 0) + 1; idCanal[x.canal] = kick ? x.canal_login : x.canal_id; });
       const nomes = Object.entries(porCanal).sort((x, y) => y[1] - x[1]);
       canalSel.hidden = !(c.origem === 'categoria' && nomes.length > 1);
-      canalSel.replaceChildren('Canal', el('select', { onchange: e => { const v = e.target.value; c.soCanal = v.startsWith('+') ? v.slice(1) : ''; c.semCanal = v.startsWith('-') ? v.slice(1) : ''; mostrar = POR_PAGINA; mostrarLista(); } },
+      /* Escolher um canal busca os clipes DELE direto na plataforma: a amostra da categoria só traz os mais vistos de todos os idiomas. */
+      canalSel.replaceChildren('Canal', el('select', { title: 'Escolher um canal busca todos os clipes dele no período, direto na plataforma', onchange: e => {
+        const v = e.target.value;
+        if (v.startsWith('+') && idCanal[v.slice(1)]) { Object.assign(c, { origem: 'canal', canal: idCanal[v.slice(1)], nome: v.slice(1), soCanal: '', semCanal: '' }); desenhar(); return; }
+        c.soCanal = ''; c.semCanal = v.startsWith('-') ? v.slice(1) : ''; mostrar = POR_PAGINA; mostrarLista();
+      } },
         el('option', { value: '', textContent: `Todos (${lista.length})` }),
         ...(nomes.length && nomes[0][1] > 2 ? [el('option', { value: `-${nomes[0][0]}`, textContent: `Sem ${nomes[0][0]}`, selected: c.semCanal === nomes[0][0] })] : []),
         ...nomes.slice(0, 30).map(([n, k]) => el('option', { value: `+${n}`, textContent: `${n} (${k})`, selected: c.soCanal === n }))));
@@ -411,15 +469,18 @@
         if (lista.length - ok.length) nota = `${lista.length - ok.length} ${lista.length - ok.length === 1 ? 'clipe aguardando' : 'clipes aguardando'} amostras: o crescimento só é calculado entre duas medições reais com 10 min ou mais de distância`;
         lista = ok;
       }
-      info.textContent = [`${dados.titulo}, ${PERIODO[dados.intervalo]}`, `${dados.clips.length} ${dados.clips.length === 1 ? 'clipe' : 'clipes'} (até ${dados.limite_paginas}; a Twitch entrega dos mais vistos para os menos vistos)`,
+      info.textContent = [`${dados.titulo}, ${PERIODO[dados.intervalo]}`, dados.plataforma === 'kick' ? `${dados.clips.length} ${dados.clips.length === 1 ? 'clipe' : 'clipes'} da Kick`
+        : dados.origem === 'categoria' ? `${dados.clips.length} ${dados.clips.length === 1 ? 'clipe' : 'clipes'} (os ${dados.limite_paginas} mais vistos da categoria em todos os idiomas${dados.idioma ? ', mais os canais desse idioma ao vivo agora' : ''}; para ver tudo de um streamer, escolha o Canal)`
+        : `${dados.clips.length} ${dados.clips.length === 1 ? 'clipe' : 'clipes'} deste canal`,
         `atualizado às ${hora(dados.atualizado)}`, nota].filter(Boolean).join(' · ');
+      botaoGerar(lista);
       grade.replaceChildren(...(lista.length ? lista.slice(0, mostrar).map(x => cartaoClipe(x, () => carregar()))
         : [vazio(c.quem === 'proprio' ? `Nenhum clipe feito pelo próprio streamer ${PERIODO[c.intervalo]}: todos foram feitos por espectadores. Na Twitch é quase sempre assim; os cortes do próprio streamer costumam ir para o YouTube ou TikTok.` : c.ranking === 'crescendo' ? 'Ainda não há duas medições com 10 min de distância. Com o painel aberto, as visualizações desta lista são medidas de novo a cada 10 min.' : 'Nenhum clipe neste intervalo.')]));
       mais.replaceChildren(lista.length > mostrar ? botao(`Mostrar mais (${Math.min(POR_PAGINA, lista.length - mostrar)} de ${lista.length - mostrar} restantes)`, () => { mostrar += POR_PAGINA; mostrarLista(); }) : '');
     }
     async function carregar(forcar = false) {
       try {
-        const r = await api('/api/descobrir/clips' + qs({ origem: c.origem, criador: c.origem === 'criador' ? c.criador : '', canal: c.origem === 'canal' ? c.canal : '',
+        const r = await api('/api/descobrir/clips' + qs({ plataforma: kick ? 'kick' : '', origem: c.origem, criador: c.origem === 'criador' ? c.criador : '', canal: c.origem === 'canal' ? c.canal : '',
           nome: c.origem === 'canal' ? c.nome : '', categoria: c.origem === 'categoria' ? c.cat : '', idioma: c.origem === 'categoria' ? c.idioma : '', intervalo: c.intervalo, forcar }));
         if (!ativa(g)) return;
         dados = r; mostrarLista();
@@ -466,13 +527,14 @@
       return st.online ? `ao vivo · ${fmtNum(st.espectadores)} assistindo${st.jogo ? ' · ' + st.jogo : ''}` : `offline (conferido às ${hora(st.visto)})`;
     }
     function linhaConta(c, k) {
-      const url = canalUrl(k), mon = k.plataforma === 'twitch' && D.criadores.monitorados.includes(k.id);
+      const url = canalUrl(k), mon = D.criadores.monitorados.includes(k.plataforma === 'kick' ? `kick:${k.login.toLowerCase()}` : k.id);
       return el('div', { className: 'linha-item dc-conta' }, el('span', { className: 'ponto' + (k.status && k.status.online ? ' on' : '') }), selo(k.plataforma),
         el('span', { className: 'nome' }, k.nome && k.nome.toLowerCase() !== k.login.toLowerCase() ? `${k.nome} (${k.login})` : k.nome || k.login,
           el('small', { textContent: [k.id ? `ID ${k.id}` : 'sem ID', k.verificado ? 'verificado pela API' : (k.nota || 'não verificado'), estadoTxt(k)].join(' · '), title: k.nota || '' })),
         url ? link('Abrir', url) : null,
-        k.plataforma === 'twitch' && k.id ? (mon ? botao('Monitorando', () => { D.aba = 'monitor'; desenhar(); })
-          : botao('Monitorar', acao(async () => { await api('/api/descobrir/monitor/adicionar', { user_id: k.id }); avisar(`Monitorando ${k.login}.`); await carregar(); }))) : null,
+        (k.plataforma === 'twitch' && k.id) || k.plataforma === 'kick' ? (mon ? botao('Monitorando', () => { D.aba = 'monitor'; desenhar(); })
+          : botao('Monitorar', acao(async () => { await api('/api/descobrir/monitor/adicionar', k.plataforma === 'kick' ? { plataforma: 'kick', login: k.login } : { user_id: k.id }); avisar(`Monitorando ${k.login}.`); await carregar(); }))) : null,
+        k.plataforma === 'kick' && k.status && k.status.online ? botao('Gravar e clipar', () => analisarAoVivo(k.login, k.nome || k.login, k.status.inicio, 'kick'), 'btn mini') : null,
         botao('Remover', confirmar('Confirmar', acao(async () => { await api('/api/descobrir/criadores/conta-remover', { criador: c.id, plataforma: k.plataforma, chave: k.id || k.login }); await carregar(); })), 'btn leve mini perigo', { title: 'Tirar esta conta do criador' }));
     }
     function formConta(c) {
@@ -522,7 +584,8 @@
         el('div', { className: 'ferramentas', style: 'margin:0' },
           botao('Buscar IDs', acao(async () => { D.candidatos[c.id] = await api('/api/descobrir/criadores/buscar-ids', { id: c.id }); redesenhar(); }), 'btn mini', { title: 'Consulta a Twitch (e a Kick, se configurada) e mostra candidatos para você confirmar' }),
           botao(D.contaAberta === c.id ? 'Fechar formulário' : 'Adicionar conta', () => { D.contaAberta = D.contaAberta === c.id ? '' : c.id; redesenhar(); }),
-          c.contas.some(k => k.plataforma === 'twitch' && k.id) ? botao('Ver clipes', () => { Object.assign(D.clips, { origem: 'criador', criador: c.id }); D.aba = 'clips'; desenhar(); }) : null),
+          c.contas.some(k => k.plataforma === 'twitch' && k.id) ? botao('Ver clipes', () => { Object.assign(D.clips, { plataforma: 'twitch', origem: 'criador', criador: c.id }); D.aba = 'clips'; desenhar(); }) : null,
+          c.contas.some(k => k.plataforma === 'kick') ? botao('Ver clipes na Kick', () => { Object.assign(D.clips, { plataforma: 'kick', origem: 'criador', criador: c.id }); D.aba = 'clips'; desenhar(); }) : null),
         D.contaAberta === c.id ? formConta(c) : null, cand ? painelCandidatos(c, cand) : null);
     }
     function desenharLista() {
@@ -556,32 +619,33 @@
     const lives = el('div', { className: 'canais' }), info = el('p', { className: 'dica', style: 'margin:0 0 12px' });
     const chips = el('div', { className: 'filtros' }), fila = el('div', { className: 'grade dc-clips' });
     const analise = el('section', { className: 'card bloco dc-analise' });
-    const login = el('input', { placeholder: 'canal da Twitch ou link', autocomplete: 'off', required: true });
+    const login = el('input', { placeholder: 'canal da Twitch ou da Kick, ou o link', autocomplete: 'off', required: true });
+    const platMon = el('select', { ariaLabel: 'Plataforma' }, el('option', { value: 'twitch', textContent: 'Twitch' }), el('option', { value: 'kick', textContent: 'Kick' }));
     const explica = (t, p) => el('div', { className: 'card' }, el('h3', { textContent: t }), el('p', { textContent: p }));
     corpo.replaceChildren(
-      el('form', { className: 'card bloco dc-add', onsubmit: acao(async () => { await api('/api/descobrir/monitor/adicionar', { login: login.value }); login.value = ''; avisar('Live monitorada.'); D.ultimoMonitor = ''; await carregar(); }) },
-        el('label', {}, 'Monitorar um canal da Twitch (até 5)', login), el('button', { className: 'btn', type: 'submit', textContent: 'Monitorar' })),
+      el('form', { className: 'card bloco dc-add', onsubmit: acao(async () => { await api('/api/descobrir/monitor/adicionar', { login: login.value, plataforma: platMon.value }); login.value = ''; avisar('Live monitorada.'); D.ultimoMonitor = ''; await carregar(); }) },
+        el('label', {}, 'Plataforma', platMon), el('label', {}, 'Monitorar um canal (até 5)', login), el('button', { className: 'btn', type: 'submit', textContent: 'Monitorar' })),
       el('div', { className: 'tres' },
-        explica('Como funciona', 'O status é conferido a cada 90 s. Nas lives monitoradas ao vivo, a cada 2 min o Vice Clips busca os clipes criados desde o início da live (GET /clips com started_at) e manda os novos para a fila.'),
-        explica('O que a API não dá', 'A listagem de lives não dá acesso ao vídeo ao vivo. Os candidatos são clipes que alguém já criou na Twitch.'),
-        explica('Importar', 'Importar (oficial) usa GET /clips/downloads: só o dono do canal e os editores dele recebem o arquivo. Sem permissão, o clipe fica como Só link.')),
+        explica('Monitorar = clipes do público', 'Status a cada 90 s. Com a live no ar, a cada 2 min os clipes que o público criou nela entram na Fila de revisão. Daqui eles viram conteúdo com Editar clipe ou em lote em Clipes em alta → Gerar conteúdo.'),
+        explica('Gravar = os seus momentos', 'Gravar e clipar (ou Analisar ao vivo) grava a live no seu PC e marca momentos pela voz, pela imagem e pelo chat da Twitch. A barra de gravação aparece em todas as telas, com Clipar agora.'),
+        explica('Kick', 'Na Kick não existe criar clip nem baixar pela API oficial. Os clipes do público vêm dos endereços públicos do site da Kick, e o seu clipe sai da gravação com Clipar agora.')),
       info, lives,
       el('h2', { className: 'tit', style: 'margin-top:20px', textContent: 'Fila de revisão' }), chips, fila,
       el('h2', { className: 'tit', style: 'margin-top:20px', textContent: 'Análise ao vivo e de gravações' }), analise);
     function cartaoMonitor(m) {
-      const st = m.status || {};
+      const st = m.status || {}, kick = m.plataforma === 'kick', url = kick ? `https://kick.com/${m.login}` : `https://www.twitch.tv/${m.login}`;
       return el('article', { className: 'card canal' },
-        el('a', { className: 'foto', href: `https://www.twitch.tv/${m.login}`, target: '_blank', rel: 'noopener', title: 'Abrir na Twitch' },
-          st.online && st.thumb ? el('img', { src: `${st.thumb}?t=${Math.floor(Date.now() / 120000)}`, alt: '' }) : el('span', { textContent: st.online === false ? 'Offline' : 'Aguardando status' }),
+        el('a', { className: 'foto', href: url, target: '_blank', rel: 'noopener', title: `Abrir na ${kick ? 'Kick' : 'Twitch'}` },
+          st.online && st.thumb ? el('img', { src: `${st.thumb}${st.thumb.includes('?') ? '&' : '?'}t=${Math.floor(Date.now() / 120000)}`, alt: '' }) : el('span', { textContent: st.online === false ? 'Offline' : 'Aguardando status' }),
           st.online ? el('span', { className: 'selo live', textContent: `AO VIVO · ${fmtNum(st.espectadores)}` }) : null),
         el('div', { className: 'info' },
-          el('div', { className: 'topo-linha' }, el('h3', { textContent: m.nome }), selo('twitch')),
+          el('div', { className: 'topo-linha' }, el('h3', { textContent: m.nome }), selo(kick ? 'kick' : 'twitch')),
           el('p', { className: 'sub', textContent: st.online ? `${st.titulo || 'Sem título'} · no ar desde ${hora(segs(st.inicio))}` : 'Fora do ar. Quando entrar, os clipes novos da live vão para a fila.' }),
           el('small', { className: 'dc-meta', textContent: [st.visto && `status às ${hora(st.visto)}`, st.online && m.ultimo_clips && `clipes conferidos às ${hora(m.ultimo_clips)}`,
             st.online && m.clips_live !== undefined && `${m.clips_live} ${m.clips_live === 1 ? 'clipe' : 'clipes'} nesta live`, m.erro].filter(Boolean).join(' · ') || 'A primeira conferência acontece em instantes.' }),
-          el('div', { className: 'ctrl' }, link(st.online ? 'Abrir live' : 'Abrir canal', `https://www.twitch.tv/${m.login}`, 'btn mini'),
-            st.online ? botao('Analisar ao vivo', () => analisarAoVivo(m.login, m.nome, st.inicio), 'btn mini') : null,
-            botao('Ver clipes', () => { Object.assign(D.clips, { origem: 'canal', canal: m.user_id, nome: m.nome }); D.aba = 'clips'; desenhar(); }),
+          el('div', { className: 'ctrl' }, link(st.online ? 'Abrir live' : 'Abrir canal', url, 'btn mini'),
+            st.online ? botao(kick ? 'Gravar e clipar' : 'Analisar ao vivo', () => analisarAoVivo(m.login, m.nome, st.inicio, kick ? 'kick' : 'twitch'), 'btn mini') : null,
+            botao('Ver clipes', () => { Object.assign(D.clips, { plataforma: kick ? 'kick' : 'twitch', origem: 'canal', canal: kick ? m.login : m.user_id, nome: m.nome }); D.aba = 'clips'; desenhar(); }),
             botao('Parar de monitorar', acao(async () => { await api('/api/descobrir/monitor/remover', { user_id: m.user_id }); D.ultimoMonitor = ''; await carregar(); }), 'btn leve mini perigo'))));
     }
     function desenharFila(r) {
@@ -675,5 +739,5 @@
     atualizar();
   }
 
-  window.Descobrir = { mostrar, sair };
+  window.Descobrir = { mostrar, sair, gravar: analisarAoVivo };
 })();

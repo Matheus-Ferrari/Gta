@@ -219,7 +219,8 @@ def criar_corte(d: dict, tarefa=None) -> dict:
         if not caminho:
             raise ValueError("Abra o arquivo de novo: ele foi movido ou renomeado.")
         total = editor.sondar(caminho)["dur"]
-        nome, plataforma, origem, titulo_live = caminho.stem, "Arquivos", str(caminho), caminho.stem
+        plataforma = d.get("plataforma") if d.get("plataforma") in ("Twitch", "Kick") else "Arquivos"  # gravação de live vai para a pasta da plataforma
+        nome, origem, titulo_live = caminho.stem, str(caminho), caminho.stem
         entradas, margem = [str(caminho)], MARGEM
     else:
         if not d.get("autorizado"):

@@ -152,6 +152,7 @@ class Canais:
         self.ritmos: dict[str, Ritmo] = {}  # login da Twitch -> mensagens do chat
         self.clips_vivo: dict[str, dict] = {}  # login da Twitch -> clipes dos últimos 30 min
         self.ultimo_clips = 0.0
+        self.ouvintes: dict = {}  # login da Twitch -> função(t, texto): a gravação ao vivo escuta o chat deste canal
         self.login_tw: dict = {}
         self.chats: dict[str, threading.Event] = {}
         self.iniciado = False
@@ -499,17 +500,19 @@ class Canais:
     def _ajustar_chats(self) -> None:
         """Lê o chat de todo canal da Twitch ao vivo da lista: mede msgs/min para o ranking e avisa quando o chat explode."""
         querem = {c["login"] for c in self.cfg["canais"] if c["plataforma"] == "twitch" and self.estado.get(f"twitch:{c['login']}", {}).get("online")}
+        querem |= set(self.ouvintes)  # a live que está sendo gravada, mesmo fora da lista
         if not self.cfg["twitch"].get("login"):
             querem = set()
-        for login, parar in list(self.chats.items()):
-            if login not in querem:
-                parar.set()
-                del self.chats[login]
-                self.ritmos.pop(login, None)
-        for login in querem - set(self.chats):
-            parar = threading.Event()
-            self.chats[login] = parar
-            threading.Thread(target=self._ler_chat, args=(login, parar), daemon=True).start()
+        with self.trava:  # chamado pelo laço e pela gravação: não abre duas leituras do mesmo chat
+            for login, parar in list(self.chats.items()):
+                if login not in querem:
+                    parar.set()
+                    del self.chats[login]
+                    self.ritmos.pop(login, None)
+            for login in querem - set(self.chats):
+                parar = threading.Event()
+                self.chats[login] = parar
+                threading.Thread(target=self._ler_chat, args=(login, parar), daemon=True).start()
 
     def _ler_chat(self, login: str, parar: threading.Event) -> None:
         detector = DetectorChat()
@@ -540,8 +543,12 @@ class Canais:
                         elif " PRIVMSG " in linha:
                             agora = time.time()
                             ritmo.registrar(agora)
-                            achado = detector.registrar(agora, linha.split(" :", 1)[-1])
-                            if achado:
+                            texto = linha.split(" :", 1)[-1]
+                            ouvinte = self.ouvintes.get(login)
+                            if ouvinte:
+                                ouvinte(agora, texto)
+                            achado = detector.registrar(agora, texto)
+                            if achado and any(c["plataforma"] == "twitch" and c["login"] == login for c in self.cfg["canais"]):
                                 self._avisar("chat", "twitch", login, achado["motivo"])
                 s.close()
             except (OSError, ErroApi, KeyError):

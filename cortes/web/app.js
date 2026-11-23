@@ -38,8 +38,17 @@ async function api(caminho, corpo) {
   try { r = await fetch(caminho, op); } catch (e) { $('#desligado').hidden = false; throw e; }
   $('#desligado').hidden = true;
   const d = await r.json().catch(() => ({}));
+  if (r.status === 404 && caminho.startsWith('/api/')) throw new Error(PAINEL_VELHO);
   if (!r.ok) throw new Error(d.erro || 'Não consegui completar esse pedido.');
   return d;
+}
+const PAINEL_VELHO = 'O painel aberto é de uma versão anterior e não tem este recurso. Pare a gravação (se houver), feche a janela preta do painel e abra o abrir_painel.cmd de novo.';
+/* A tela é lida do disco a cada carregamento, mas o painel (a janela preta) só muda quando é reaberto: avisa quando os dois não batem. */
+async function conferirVersao() {
+  try {
+    const r = await fetch('/api/descobrir/modelos');
+    if (r.status === 404) { const n = el('div', { className: 'aviso erro', textContent: PAINEL_VELHO }); $('#avisos').append(n); }
+  } catch { /* painel desligado: o aviso de desligado já aparece */ }
 }
 const tentar = f => async (...a) => { try { return await f(...a); } catch (e) { avisar(e.message, true); } };
 async function aguardarTarefa(id, aoAvancar) {
@@ -82,6 +91,7 @@ async function atualizarFundo() {
     const ativas = tarefas.filter(t => t.estado === 'fila' || t.estado === 'rodando');
     G.tarefas = tarefas; G.canais = canais;
     novosAvisos(canais.avisos || []);
+    atualizarGravacao();
     $('#menu-fila').hidden = !ativas.length;
     $('#menu-fila').textContent = `${ativas.length} na fila`;
     if (G.tela === 'inicio') desenharPainelVivo();
@@ -124,20 +134,33 @@ function desenharInicio() {
         el('button', { className: 'btn leve mini', type: 'button', textContent: 'Clipes em alta', onclick: () => irPara('descobrir', { aba: 'clips' }) }),
         el('button', { className: 'btn leve mini', type: 'button', textContent: 'Favoritos', onclick: () => irPara('descobrir', { aba: 'favoritos' }) }),
         el('button', { className: 'btn leve mini', type: 'button', textContent: 'Monitoramento', onclick: () => irPara('descobrir', { aba: 'monitor' }) }))),
-    el('div', { id: 'ini-vivo', className: 'ini-vivo' }, el('p', { className: 'dica', style: 'margin:0', textContent: 'Consultando a Twitch...' })));
+    el('div', { id: 'ini-vivo', className: 'ini-vivo-plats' }, el('p', { className: 'dica', style: 'margin:0', textContent: 'Consultando a Twitch e a Kick...' })));
+  const cartaoIni = l => el('div', { className: 'ini-live' },
+    el('a', { href: l.link, target: '_blank', rel: 'noopener', title: l.titulo }, l.thumb ? el('img', { src: l.thumb, alt: '', loading: 'lazy' }) : el('span', { className: 'sem-thumb' })),
+    el('div', { className: 'ini-live-nome' }, el('b', { textContent: l.nome || l.login }), el('span', { className: 'selo', style: `--cor:${CORES[l.plataforma]}`, textContent: PLATAFORMA[l.plataforma] })),
+    el('span', { textContent: `${fmtNum(l.espectadores)} assistindo` }),
+    el('button', { className: 'btn leve mini', type: 'button', textContent: l.plataforma === 'kick' ? 'Gravar e clipar' : 'Analisar ao vivo',
+      onclick: () => (window.Descobrir ? Descobrir.gravar(l.login, l.nome || l.login, l.inicio, l.plataforma) : irPara('descobrir')) }));
   api('/api/descobrir/estado').then(e => api(`/api/descobrir/lives?idioma=${encodeURIComponent(e.idioma || '')}${e.rp ? '&rp=1' : ''}`)).then(r => {
     if (!$('#ini-vivo')) return;
     $('#ini-vivo-tit').textContent = `Ao vivo agora · ${r.categoria.nome}${r.idioma ? ' · ' + r.idioma.toUpperCase() : ''}`;
-    $('#ini-vivo').replaceChildren(...(r.lives.length ? r.lives.slice(0, 5).map(l => el('a', { className: 'ini-live', href: l.link, target: '_blank', rel: 'noopener', title: l.titulo },
-      l.thumb ? el('img', { src: l.thumb, alt: '', loading: 'lazy' }) : null, el('b', { textContent: l.nome || l.login }), el('span', { textContent: `${fmtNum(l.espectadores)} assistindo` })))
-      : [el('p', { className: 'dica', style: 'margin:0', textContent: 'Nenhuma live nesta categoria agora.' })]));
+    const linha = (rotulo, lives, vazioTxt) => [el('h3', { className: 'ini-plat' }, el('span', { className: 'selo', style: `--cor:${CORES[rotulo.toLowerCase()]}`, textContent: rotulo })),
+      el('div', { className: 'ini-vivo' }, ...(lives.length ? lives.slice(0, 5).map(cartaoIni) : [el('p', { className: 'dica', style: 'margin:0', textContent: vazioTxt })]))];
+    $('#ini-vivo').replaceChildren(...linha('Twitch', r.lives.map(l => ({ ...l, plataforma: 'twitch' })), 'Nenhuma live da Twitch nesta categoria agora.'),
+      ...linha('Kick', r.kick || [], r.kick_erro || 'Nenhuma live da Kick nesta categoria agora.'));
   }).catch(e => { if ($('#ini-vivo')) $('#ini-vivo').replaceChildren(el('p', { className: 'dica', style: 'margin:0', textContent: `${e.message} `}, el('button', { className: 'btn leve mini', type: 'button', textContent: 'Abrir Lives', onclick: () => irPara('descobrir') }))); });
-  t.replaceChildren(hero, el('section', { id: 'numeros', className: 'numeros' }), vivo,
+  const gravacao = el('section', { id: 'ini-gravacao', className: 'card bloco', hidden: !gravando() },
+    el('div', { className: 'topo-linha', style: 'margin-bottom:10px' }, el('h2', { className: 'tit', style: 'margin:0', textContent: 'Gravando agora' }),
+      el('button', { className: 'btn leve mini', type: 'button', textContent: 'Tela cheia', onclick: abrirEstudio })), el('div', { id: 'ini-gravacao-corpo' }));
+  t.replaceChildren(hero, el('section', { id: 'numeros', className: 'numeros' }), gravacao, vivo,
     el('div', { className: 'duas' },
       el('section', {}, el('div', { className: 'topo-linha', style: 'margin-bottom:10px' }, el('h2', { className: 'tit', style: 'margin:0', textContent: 'Cortes recentes' }), botaoSelecionar()), el('div', { id: 'recentes', className: 'grade' })),
       el('div', { className: 'coluna' },
-        el('section', { className: 'card bloco', style: 'margin:0' }, el('h2', { className: 'tit', textContent: 'Lives monitoradas' }), el('div', { id: 'ini-canais', className: 'lista' })),
+        el('section', { className: 'card bloco', style: 'margin:0' }, el('div', { className: 'topo-linha', style: 'margin-bottom:10px' }, el('h2', { className: 'tit', style: 'margin:0', textContent: 'Meus canais · ranking' }),
+          el('button', { className: 'btn leve mini', type: 'button', textContent: 'Abrir', onclick: () => irPara('lives', { aba: 'vivo' }) })), el('div', { id: 'ini-canais', className: 'lista' })),
+        el('section', { className: 'card bloco', style: 'margin:0' }, el('h2', { className: 'tit', textContent: 'Avisos' }), el('div', { id: 'ini-avisos', className: 'lista' })),
         el('section', { className: 'card bloco', style: 'margin:0' }, el('h2', { className: 'tit', textContent: 'Fila de tarefas' }), el('div', { id: 'ini-fila', className: 'lista' })))));
+  if (GV.cap) pintarEstudio($('#ini-gravacao-corpo'));
   carregarLives().then(() => {
     const cortes = todosCortes();
     G.visiveis = cortes.slice(0, 8);
@@ -160,6 +183,8 @@ function desenharPainelVivo() {
     el('span', { className: 'selo', style: `--cor:${CORES[c.plataforma]}`, textContent: PLATAFORMA[c.plataforma] }),
     c.online ? el('span', { className: 'selo live', textContent: fmtNum(c.espectadores) }) : null))
     : [el('p', { className: 'dica', textContent: 'Adicione canais na tela Lives.' })]));
+  const avisos = (G.canais.avisos || []).slice(0, 5);
+  if ($('#ini-avisos')) $('#ini-avisos').replaceChildren(...(avisos.length ? avisos.map(linhaAviso) : [el('p', { className: 'dica', style: 'margin:0', textContent: 'Canal entrando ao vivo, audiência subindo, chat explodindo e rajada de clipes aparecem aqui.' })]));
   const itens = G.tarefas.slice(0, 5);
   $('#ini-fila').replaceChildren(...(itens.length ? itens.map(linhaTarefa) : [el('p', { className: 'dica', textContent: 'Nenhuma tarefa no momento.' })]));
 }
@@ -367,6 +392,120 @@ function desenharLives() {
       el('div', { className: 'card' }, el('h3', { textContent: 'Depois da live' }), el('p', {}, 'Para cortar a gravação, use ', el('button', { className: 'btn leve mini', type: 'button', textContent: 'Gerar Cortes', onclick: () => irPara('gerar', { modo: 'manual' }) }), ' e cole o link da live encerrada.'))));
   desenharCanais();
 }
+/* ---------- gravação ao vivo: barra em todas as telas + estúdio (player da live, momentos, Clipar agora) ---------- */
+const GV = { cap: null, analise: null, vistos: null, barra: null };
+const NOMES_CAP = { conectando: 'Conectando à live', gravando: 'Gravando', encerrada: 'A live acabou ou caiu', parada: 'Gravação parada', erro: 'Erro na gravação' };
+const tempoVivo = t => { t = Math.max(0, Math.round(t || 0)); const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = t % 60; return `${h ? h + ':' + String(m).padStart(2, '0') : m}:${String(s).padStart(2, '0')}`; };
+function avisoComBotao(texto, rotulo, fn) {
+  const n = el('div', { className: 'aviso' }, texto, ' ', el('button', { className: 'btn leve mini', type: 'button', textContent: rotulo, onclick: () => { n.remove(); fn(); } }));
+  $('#avisos').append(n); setTimeout(() => n.remove(), 15000);
+}
+async function esperarCorte(t, texto) {
+  avisar(`${texto}: na fila.`);
+  const r = await aguardarTarefa(t.id);
+  avisoComBotao(`${texto}: pronto.`, 'Abrir no editor', () => irPara('editor', { corte: r.corte }));
+  atualizarGravacao();
+}
+const clipar = seg => tentar(async () => esperarCorte(await api('/api/descobrir/aovivo/clipar', { segundos: seg }), `Clip dos últimos ${seg} s`));
+const gravando = () => { const c = GV.cap; return !!(c && c.login && (c.rodando || c.estado === 'conectando')); };
+/* Momentos da gravação: do chat (Twitch) e da análise de voz e imagem, o mais recente primeiro. */
+function momentosGravacao() {
+  const c = GV.cap, a = GV.analise || {};
+  if (!c || !c.login) return [];
+  const chat = ((c.chat || {}).momentos || []).filter(m => m.fim !== undefined).map(m => ({ ...m, fonte: 'chat', criar: () => api('/api/descobrir/aovivo/momento', { indice: m.indice }) }));
+  const analise = a.arquivo === c.arquivo ? (a.sugestoes || []).map((s, i) => ({ ...s, fonte: 'analise', corte: (c.feitos || {})[`analise:${Math.round(s.pico * 10)}`], criar: () => api('/api/descobrir/analise/corte', { indice: i, streamer: c.login }) })) : [];
+  return [...chat, ...analise].sort((x, y) => y.pico - x.pico);
+}
+function linhaMomento(m) {
+  return el('div', { className: 'linha-item' }, el('span', { className: 'dc-nota', textContent: m.nota, title: 'Nota do momento (estimativa, não prevê alcance)' }),
+    el('span', { className: 'nome' }, `${tempoVivo(m.pico)} da gravação · ${m.fonte === 'chat' ? 'chat' : 'voz e imagem'}`,
+      el('small', { textContent: (m.motivos || []).join(' · ') + (m.fala ? ` · “${m.fala}”` : ''), title: (m.motivos || []).join(' · ') })),
+    m.corte ? el('button', { className: 'btn mini', type: 'button', textContent: 'Abrir no editor', onclick: () => irPara('editor', { corte: m.corte }) })
+      : m.corte === '' ? el('span', { className: 'dica', style: 'margin:0', textContent: 'criando...' })
+      : el('button', { className: 'btn leve mini', type: 'button', textContent: 'Criar corte', onclick: tentar(async ev => { ev.currentTarget.disabled = true; await esperarCorte(await m.criar(), `Corte de ${tempoVivo(m.pico)}`); }) }));
+}
+function desenharBarraGravacao() {
+  const c = GV.cap;
+  if (!c || !c.login || GV.fechada === c.arquivo || (!gravando() && !(c.terminou && Date.now() / 1000 - c.terminou < 900) && c.estado !== 'erro')) { if (GV.barra) { GV.barra.remove(); GV.barra = null; } return; }
+  if (!GV.barra || GV.barra.dataset.arquivo !== c.arquivo || GV.barra.dataset.vivo !== String(gravando())) {
+    if (GV.barra) GV.barra.remove();
+    const vivo = gravando();
+    GV.barra = el('div', { className: 'barra-gravacao card' }, el('span', { className: 'ponto' + (vivo ? ' on' : '') }), el('span', { className: 'nome' }, el('b'), el('small')),
+      vivo ? el('button', { className: 'btn mini', type: 'button', textContent: 'Clipar 30 s', title: 'Corta os últimos 30 s da gravação e cria o corte', onclick: clipar(30) }) : null,
+      vivo ? el('button', { className: 'btn mini', type: 'button', textContent: 'Clipar 60 s', onclick: clipar(60) }) : null,
+      el('button', { className: 'btn leve mini', type: 'button', textContent: 'Assistir e momentos', onclick: abrirEstudio }),
+      vivo ? el('button', { className: 'btn leve mini perigo', type: 'button', textContent: 'Parar', onclick: tentar(async () => { await api('/api/descobrir/aovivo/parar', {}); atualizarGravacao(); }) })
+        : el('button', { className: 'btn leve mini', type: 'button', textContent: 'Fechar', onclick: () => { GV.fechada = c.arquivo; desenharBarraGravacao(); } }));
+    Object.assign(GV.barra.dataset, { arquivo: c.arquivo, vivo: String(vivo) });
+    document.body.append(GV.barra);
+  }
+  const ms = momentosGravacao();
+  GV.barra.querySelector('b').textContent = `${gravando() ? (c.estado === 'conectando' ? 'Conectando à live de' : 'Gravando') : NOMES_CAP[c.estado] || c.estado} ${c.login}`;
+  GV.barra.querySelector('small').textContent = c.erro || [PLATAFORMA[c.plataforma || 'twitch'], `${c.minutos} min`, `${c.mb} MB`, c.chat && c.chat.lido ? `chat ${fmtNum(c.chat.msgs_min)}/min` : '',
+    `${ms.length} momento${ms.length === 1 ? '' : 's'}`, c.auto ? `clipa sozinho ≥ ${c.auto}` : ''].filter(Boolean).join(' · ');
+}
+function abrirEstudio() {
+  const d = el('dialog', { className: 'estudio-dlg' });
+  const caixa = el('div', { id: 'estudio-vivo' });
+  d.append(el('div', { className: 'topo-linha', style: 'padding:12px 16px 0' }, el('h2', { className: 'tit', style: 'margin:0', textContent: 'Ao vivo no Vice Clips' }),
+    el('button', { className: 'btn leve mini', type: 'button', textContent: 'Fechar', onclick: () => d.close() })), caixa);
+  d.addEventListener('close', () => d.remove());
+  document.body.append(d); d.showModal();
+  pintarEstudio(caixa);
+}
+/* Player da live + controles + momentos. O player só é recriado quando muda a live (não recarrega a cada atualização). */
+function pintarEstudio(caixa) {
+  const c = GV.cap;
+  if (!c || !c.login) { caixa.replaceChildren(el('p', { className: 'dica', textContent: 'Nenhuma live sendo gravada. Em Lives → Ao vivo agora, use Gravar e clipar (Kick) ou Analisar ao vivo (Twitch).' })); delete caixa.dataset.arquivo; return; }
+  if (caixa.dataset.arquivo !== c.arquivo) {
+    caixa.dataset.arquivo = c.arquivo;
+    const kick = c.plataforma === 'kick';
+    const src = kick ? `https://player.kick.com/${c.login}?muted=true` : `https://player.twitch.tv/?channel=${c.login}&parent=${location.hostname}&muted=true`;
+    const auto = el('select', { onchange: tentar(async e => { await api('/api/descobrir/aovivo/auto', { nota: Number(e.target.value) }); atualizarGravacao(); }) },
+      ...[['0', 'Clipar sozinho: desligado'], ['60', 'Clipar sozinho: nota ≥ 60'], ['75', 'Clipar sozinho: nota ≥ 75'], ['90', 'Clipar sozinho: nota ≥ 90']].map(([v, t]) => el('option', { value: v, textContent: t, selected: Number(v) === (c.auto || 0) })));
+    caixa.className = 'estudio-vivo';
+    caixa.replaceChildren(
+      el('div', { className: 'ev-player' }, el('iframe', { src, allowFullscreen: true, allow: 'autoplay; fullscreen', title: `Live de ${c.login}` }),
+        el('small', { className: 'dica', textContent: kick ? 'Player oficial da Kick.' : `Player oficial da Twitch. Se não carregar, abra o painel em http://localhost:${location.port}.` })),
+      el('div', { className: 'ev-lado' },
+        el('div', { className: 'ev-status' }, el('b'), el('small')),
+        el('div', { className: 'ferramentas', style: 'margin:0' },
+          el('button', { className: 'btn mini', type: 'button', textContent: 'Clipar 30 s', onclick: clipar(30) }),
+          el('button', { className: 'btn mini', type: 'button', textContent: 'Clipar 60 s', onclick: clipar(60) }),
+          el('button', { className: 'btn leve mini perigo', type: 'button', textContent: 'Parar gravação', onclick: tentar(async () => { await api('/api/descobrir/aovivo/parar', {}); atualizarGravacao(); }) })),
+        auto,
+        el('p', { className: 'dica', style: 'margin:0', textContent: `A gravação guarda tudo, então nenhum momento passa. Momentos vêm da voz, dos gritos, das risadas e das mudanças de cena${kick ? '' : ' e do chat (acelerando, kkkk, pedindo “clipa”)'}. O chat reage uns segundos depois: o corte começa 20 s antes da reação.` }),
+        el('h3', { className: 'tit', style: 'margin:6px 0 0', textContent: 'Momentos' }), el('div', { className: 'ev-momentos lista' })));
+  }
+  caixa.querySelector('.ev-status b').textContent = `${gravando() ? 'Gravando' : NOMES_CAP[c.estado] || c.estado} · ${c.login} (${PLATAFORMA[c.plataforma || 'twitch']})`;
+  caixa.querySelector('.ev-status small').textContent = c.erro || [`${c.minutos} min gravados`, `${c.mb} MB`, c.qualidade,
+    c.chat && c.chat.lido ? `chat ${fmtNum(c.chat.msgs_min)} msgs/min` : c.plataforma === 'kick' ? 'chat da Kick: ainda não lido (momentos pela voz e imagem)' : c.chat ? 'chat: conectando' : 'chat: reinicie o painel para ler o chat'].join(' · ');
+  const ms = momentosGravacao(), lista = caixa.querySelector('.ev-momentos');
+  const marca = JSON.stringify(ms.map(m => [m.pico, m.nota, m.corte, (m.motivos || []).length]));
+  if (lista.dataset.marca !== marca) { // só redesenha quando muda: não some o botão no meio do clique
+    lista.dataset.marca = marca;
+    lista.replaceChildren(...(ms.length ? ms.slice(0, 40).map(linhaMomento) : [el('p', { className: 'dica', style: 'margin:0', textContent: 'Nenhum momento ainda. A análise roda a cada 25 s e o chat precisa de ~1 min para ter a base de comparação.' })]));
+  }
+}
+/* Momento forte novo vira aviso com Criar corte. */
+function novosMomentos() {
+  const ms = momentosGravacao(), chave = m => `${m.fonte}:${Math.round(m.pico)}`;
+  if (GV.vistos === null) { GV.vistos = new Set(ms.map(chave)); return; }
+  for (const m of ms) {
+    if (GV.vistos.has(chave(m))) continue;
+    GV.vistos.add(chave(m));
+    if (m.nota >= 70 && !m.corte) avisoComBotao(`${GV.cap.login}: momento forte (${m.nota}) · ${(m.motivos || []).slice(0, 2).join(', ')}`, 'Criar corte',
+      tentar(async () => esperarCorte(await m.criar(), `Corte de ${tempoVivo(m.pico)}`)));
+  }
+}
+async function atualizarGravacao() {
+  try { const e = await api('/api/descobrir/analise'); GV.analise = e; GV.cap = e.captura && e.captura.login ? e.captura : null; } catch { return; }
+  desenharBarraGravacao(); novosMomentos();
+  document.querySelectorAll('#estudio-vivo, #ini-gravacao-corpo').forEach(pintarEstudio);
+  if ($('#ini-gravacao')) $('#ini-gravacao').hidden = !gravando();
+}
+window.atualizarGravacao = atualizarGravacao;
+
 /* ---------- ranking e avisos dos canais ao vivo ---------- */
 const ROTULO_AVISO = { online: 'Entrou ao vivo', subindo: 'Audiência subindo', chat: 'Chat explodindo', clipes: 'Clipes saindo' };
 const linkCanal = c => (c.plataforma === 'kick' ? `https://kick.com/${c.login}` : `https://www.twitch.tv/${c.login}`);
@@ -443,6 +582,7 @@ function desenharCanais() {
           c.online === null && c.erro ? el('button', { className: 'btn mini', type: 'button', textContent: 'Configurar', onclick: () => irPara('config') }) : null,
           c.plataforma === 'twitch' && c.online ? el('button', { className: 'btn mini', type: 'button', textContent: 'Criar clip', onclick: () => criarClip(c.login) }) : null,
           c.online ? el('a', { className: 'btn leve mini', href: linkCanal(c), target: '_blank', rel: 'noopener', textContent: 'Assistir' }) : null,
+          c.online && window.Descobrir ? el('button', { className: 'btn mini', type: 'button', textContent: c.plataforma === 'kick' ? 'Gravar e clipar' : 'Gravar', title: 'Grava a live no PC, marca os momentos e libera o Clipar agora', onclick: () => Descobrir.gravar(c.login, c.nome || c.login, c.inicio, c.plataforma) }) : null,
           el('button', { className: 'btn leve mini perigo', type: 'button', textContent: 'Remover', onclick: tentar(async () => { await api('/api/canais/remover', { plataforma: c.plataforma, login: c.login }); await recarregarCanais(); }) }))));
   }) : [el('div', { className: 'vazio', textContent: 'Nenhum canal adicionado.' })]));
 }
@@ -795,6 +935,7 @@ function iniciar() {
   });
   irPara('inicio');
   atualizarFundo();
+  conferirVersao();
   acompanhar().catch(() => {});
 }
 document.addEventListener('DOMContentLoaded', iniciar);

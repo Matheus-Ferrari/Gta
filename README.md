@@ -78,8 +78,11 @@ Eventos visuais do jogo não entram no cálculo.
 | Top 5 ao vivo (Lives → Meus canais) | Nota de 0 a 100 entre os seus canais ao vivo: audiência, crescimento em ~10 min, mensagens por minuto no chat e clipes dos últimos 30 min |
 | Avisos | Canal entrou ao vivo, audiência +25% em ~10 min, chat acelerando (Twitch) e 3+ clipes em 10 min (Twitch). Aparecem no painel e, se você permitir, como notificação do Windows |
 | Chat da Twitch | Lido (só leitura) em todo canal da Twitch ao vivo da sua lista. Quem decide criar o clip é você |
-| Status ao vivo na Kick | Exige Client ID e Client Secret gratuitos |
-| Chat e clips na Kick | A API oficial da Kick não entrega nenhum dos dois: na Kick a nota usa só audiência e crescimento. Para cortar, use o link da gravação em Gravações / VODs |
+| Status e lives da Kick | API oficial (Client ID e Client Secret gratuitos). Lives por categoria e idioma em Ao vivo agora e na Início, ao lado da Twitch |
+| Clipes da Kick | A API oficial não tem clipes: vêm dos endereços públicos do site da Kick (20 por consulta). Com idioma, busca também direto os canais desse idioma ao vivo na categoria |
+| Gravar e clipar (Twitch e Kick) | Grava a live no PC daqui para a frente. Barra em todas as telas com Clipar agora (últimos 30/60 s), player da live e momentos com nota: voz, gritos, risadas, mudança de cena e, na Twitch, o chat (acelerando, kkkk, pedindo clip). "Clipar sozinho" cria o corte de todo momento acima da nota escolhida |
+| Gerar conteúdo dos Top N | Em Clipes em alta: baixa os primeiros clipes da lista filtrada, cria os cortes e, com layout salvo do streamer ("Salvar para este streamer" no editor), já renderiza o Reel com o título do clipe na manchete |
+| Chat da Kick | Ainda não lido: na Kick, os momentos vêm só da voz e da imagem |
 | Gravação da Twitch | Dados pela API oficial e player oficial. O trecho só é baixado com autorização confirmada |
 | Clip sem permissão de download | Fica como "Só link". Use Importar arquivo autorizado se o criador enviar o arquivo |
 | Captura contínua da live | Não disponível. Use o link da gravação quando a live terminar |

@@ -428,3 +428,33 @@ dialog::backdrop { background: rgba(4, 4, 14, .85); }
   .top-item { grid-template-columns: 22px minmax(0, 1fr) auto; }
   .top-item img, .top-item .sem-thumb { display: none; }
 }
+/* Início: Twitch e Kick lado a lado */
+.ini-vivo-plats { display: grid; gap: 8px; }
+.ini-plat { margin: 4px 0 0; font-size: 12px; }
+.ini-live { align-content: start; }
+.ini-live a { display: block; }
+.ini-live .sem-thumb { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; background: linear-gradient(135deg, #1b1140, #3a1140); }
+.ini-live-nome { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ini-live-nome b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ini-live .btn { justify-self: start; }
+/* gravação ao vivo: barra em todas as telas e estúdio */
+.barra-gravacao { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 9px 12px; max-width: calc(100vw - 32px); border-color: var(--rosa); box-shadow: 0 8px 30px rgba(0, 0, 0, .55), var(--brilho); }
+.barra-gravacao .nome { display: grid; min-width: 0; font-size: 13px; }
+.barra-gravacao small { color: var(--suave); }
+.estudio-dlg { width: min(1280px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0; background: var(--card); color: var(--texto); border: 1px solid var(--linha); border-radius: 14px; }
+.estudio-dlg::backdrop { background: rgba(4, 4, 12, .75); }
+.estudio-vivo { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 14px; padding: 14px 16px 16px; }
+.ev-player { display: grid; gap: 6px; align-content: start; }
+.ev-player iframe { width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 10px; background: #000; }
+.ev-lado { display: grid; gap: 10px; align-content: start; min-width: 0; }
+.ev-status { display: grid; }
+.ev-status small { color: var(--suave); }
+.ev-momentos { max-height: 46vh; overflow-y: auto; }
+.dc-info-linha { align-items: flex-start; margin-bottom: 12px; }
+.dc-info-linha .dica { margin: 0 !important; }
+.dc-gerar { flex: none; }
+.dc-tit-plat { display: flex; align-items: center; gap: 8px; }
+@media (max-width: 900px) { .estudio-vivo { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 780px) { .barra-gravacao { left: 16px; right: 16px; transform: none; } }
+.ini-live .selo { color: #120a1c; font-size: 11px; }
