@@ -105,3 +105,5 @@
 .dc-pessoa.duvida { border-style: dashed; opacity: .7; }
 .dc-editando { display: inline-flex; align-items: center; flex: none; }
 .dc-foco { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; color: #fff; font-weight: 600; }
+.dc-quem { justify-self: start; padding: 2px 8px; border-radius: 6px; background: rgba(45, 226, 230, .12); color: var(--ciano); font-size: 12px; font-weight: 700; }
+.dc-quem.proprio { background: rgba(255, 45, 149, .16); color: var(--rosa2); }

@@ -258,7 +258,9 @@
         importado ? el('span', { className: 'estado ok', textContent: 'Arquivo local · editável' }) : soLink ? el('span', { className: 'estado link', textContent: 'Só link' }) : null,
         el('span', { className: 'tempo', textContent: `${Math.round(x.duracao)} s` })),
       el('div', { className: 'corpo' },
-        el('span', { className: 'quem', textContent: `${x.canal} · ${ha(x.criado)}`, title: `Criado em ${dataHora(x.criado)} por ${x.autor}` }),
+        el('span', { className: 'quem', textContent: `Live de ${x.canal} · ${ha(x.criado)}`, title: `Criado em ${dataHora(x.criado)} por ${x.autor}` }),
+        x.autor_id && x.autor_id === x.canal_id ? el('span', { className: 'dc-quem proprio', textContent: `Clipado pelo próprio ${x.canal}` })
+          : el('span', { className: 'dc-quem', textContent: `Clipado por ${x.autor || 'um espectador'} (espectador)` }),
         el('p', { className: 'motivo', textContent: x.titulo || x.id }),
         el('div', { className: 'dc-metricas' }, el('b', { textContent: `${x.views.toLocaleString('pt-BR')} ${x.views === 1 ? 'visualização' : 'visualizações'}` }),
           cr.estado === 'ok' ? el('span', { className: 'dc-cresce' + (cr.por_hora > 0 ? '' : ' parado'), textContent: `${cr.por_hora > 0 ? '+' : ''}${fmtNum(Math.round(cr.por_hora))}/h`,
@@ -267,7 +269,7 @@
         x.momento ? el('small', { className: 'dc-momento' + (x.ao_vivo ? ' vivo' : ''), title: x.vod_titulo || '',
           textContent: `Momento: ${dataHora(new Date(x.momento * 1000).toISOString())} · ${x.ao_vivo ? 'clipado ao vivo' : 'clipado depois, da gravação'}` })
           : el('small', { className: 'dc-momento', textContent: 'Gravação indisponível: não dá para saber em que momento da live foi' }),
-        el('small', { className: 'dica', style: 'margin:0', textContent: `Criado ${dataHora(x.criado)} · ${x.autor_id && x.autor_id === x.canal_id ? 'clipado pelo próprio streamer' : `clip de ${x.autor || 'alguém'}`}${soLink ? ' · a Twitch só entrega o arquivo ao dono do canal e aos editores dele' : ''}` }),
+        el('small', { className: 'dica', style: 'margin:0', textContent: `Criado ${dataHora(x.criado)}${soLink ? ' · a Twitch só entrega o arquivo ao dono do canal e aos editores dele' : ''}` }),
         el('div', { className: 'ferramentas', style: 'margin:0' },
           botao('Assistir', ver), link('Abrir link', x.url),
           x.vod_url ? botao('Cortar da gravação', () => cortarDaGravacao(x), 'btn mini', { title: 'Abre a gravação em Gerar Cortes com início e fim já marcados neste momento (com folga de 10 s)' }) : null,
@@ -366,7 +368,7 @@
       info.textContent = [`${dados.titulo}, ${PERIODO[dados.intervalo]}`, `${dados.clips.length} ${dados.clips.length === 1 ? 'clipe' : 'clipes'} (até ${dados.limite_paginas}; a Twitch entrega dos mais vistos para os menos vistos)`,
         `atualizado às ${hora(dados.atualizado)}`, nota].filter(Boolean).join(' · ');
       grade.replaceChildren(...(lista.length ? lista.slice(0, mostrar).map(x => cartaoClipe(x, () => carregar()))
-        : [vazio(c.ranking === 'crescendo' ? 'Ainda não há duas medições com 10 min de distância. Com o painel aberto, as visualizações desta lista são medidas de novo a cada 10 min.' : 'Nenhum clipe neste intervalo.')]));
+        : [vazio(c.quem === 'proprio' ? `Nenhum clipe feito pelo próprio streamer ${PERIODO[c.intervalo]}: todos foram feitos por espectadores. Na Twitch é quase sempre assim; os cortes do próprio streamer costumam ir para o YouTube ou TikTok.` : c.ranking === 'crescendo' ? 'Ainda não há duas medições com 10 min de distância. Com o painel aberto, as visualizações desta lista são medidas de novo a cada 10 min.' : 'Nenhum clipe neste intervalo.')]));
       mais.replaceChildren(lista.length > mostrar ? botao(`Mostrar mais (${Math.min(POR_PAGINA, lista.length - mostrar)} de ${lista.length - mostrar} restantes)`, () => { mostrar += POR_PAGINA; mostrarLista(); }) : '');
     }
     async function carregar(forcar = false) {
