@@ -29,7 +29,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import DADOS, TAXA_AUDIO, ffmpeg
+from .config import DADOS, LIVES, TAXA_AUDIO, ffmpeg
 
 BASE = Path(__file__).resolve().parent.parent
 PASTA = DADOS / "descobrir" / "ao_vivo"
@@ -52,24 +52,25 @@ WEBCAMS = {  # frações x, y, largura, altura (as mesmas posições do painel)
 }
 
 
-def _gravar(dados: dict) -> None:
+def _gravar(dados: dict, arq: Path | None = None) -> None:
     """Grava o estado sem deixar arquivo pela metade. No Windows o replace falha se alguém estiver lendo: tenta de novo."""
+    arq = arq or ARQ_ESTADO
     PASTA.mkdir(parents=True, exist_ok=True)
-    temp = ARQ_ESTADO.with_name(f"analise.{os.getpid()}.tmp")
+    temp = arq.with_name(f"{arq.stem}.{os.getpid()}.tmp")
     temp.write_text(json.dumps(dados, ensure_ascii=False), encoding="utf-8")
     for _ in range(20):
         try:
-            temp.replace(ARQ_ESTADO)
+            temp.replace(arq)
             return
         except PermissionError:
             time.sleep(0.05)
     temp.unlink(missing_ok=True)
 
 
-def ler_estado() -> dict:
+def ler_estado(arq: Path | None = None) -> dict:
     for _ in range(3):
         try:
-            return json.loads(ARQ_ESTADO.read_text(encoding="utf-8"))
+            return json.loads((arq or ARQ_ESTADO).read_text(encoding="utf-8"))
         except FileNotFoundError:
             return {}
         except (OSError, ValueError):
@@ -268,13 +269,14 @@ def _vigiar(a: argparse.Namespace, procs: list, fim: threading.Event, motivo: di
 
 
 def analisar(a: argparse.Namespace) -> None:
-    estado = ler_estado()
+    arq = Path(a.estado) if getattr(a, 'estado', '') else ARQ_ESTADO
+    estado = ler_estado(arq)
     if estado.get("id") != a.id:
         estado = {"id": a.id}
     estado.update(estado="rodando", arquivo=a.arquivo, janela=a.janela, seguir=a.seguir, webcam=a.webcam, visual=a.visual,
                   transcrever=a.transcrever, inicio_arquivo=a.inicio, processado=a.inicio, janelas=0, sugestoes=[], cenas=[],
                   mensagem="Lendo o arquivo", pid=os.getpid(), comecou=time.time())
-    _gravar(estado)
+    _gravar(estado, arq)
     som = _fluxo(a.arquivo, a.inicio, a.seguir, False, a.visual)
     img = _fluxo(a.arquivo, a.inicio, a.seguir, True, a.visual)
     detector = Detector(WEBCAMS.get(a.webcam))
@@ -318,7 +320,7 @@ def analisar(a: argparse.Namespace) -> None:
             anterior = audio
             estado.update(processado=round(t0, 1), janelas=estado["janelas"] + 1,
                           mensagem=f"Janela {estado['janelas'] + 1} analisada ({len(estado['sugestoes'])} sugestões)")
-            _gravar(estado)
+            _gravar(estado, arq)
     except Exception as erro:
         estado.update(estado="erro", mensagem=f"Falha na análise: {erro}")
     finally:
@@ -327,7 +329,7 @@ def analisar(a: argparse.Namespace) -> None:
             if p and p.poll() is None:
                 p.kill()
         estado.update(terminou=time.time(), pid=0)
-        _gravar(estado)
+        _gravar(estado, arq)
 
 
 # ---------------------------------------------------------------- controle pelo painel
@@ -335,9 +337,10 @@ def analisar(a: argparse.Namespace) -> None:
 class Analisador:
     """Uma análise por vez, em subprocesso de prioridade baixa. O painel só lê o estado gravado em disco."""
 
-    def __init__(self) -> None:
+    def __init__(self, arq: Path = ARQ_ESTADO, log: Path = ARQ_LOG) -> None:
         self.trava = threading.Lock()
         self.proc: subprocess.Popen | None = None
+        self.arq, self.log = arq, log
 
     def rodando(self) -> bool:
         return bool(self.proc and self.proc.poll() is None)
@@ -363,7 +366,7 @@ class Analisador:
                 raise ValueError("Já existe uma análise rodando. Pare a atual antes de começar outra.")
             ident = uuid.uuid4().hex[:10]
             cmd = [sys.executable, "-m", "cortes.ao_vivo", "--arquivo", str(caminho.resolve()), "--janela", str(janela), "--id", ident,
-                   "--pai", str(os.getpid()), "--visual", visual, "--inicio", str(inicio)]
+                   "--pai", str(os.getpid()), "--visual", visual, "--inicio", str(inicio), "--estado", str(self.arq)]
             if webcam:
                 cmd += ["--webcam", webcam]
             if d.get("seguir"):
@@ -372,25 +375,25 @@ class Analisador:
                 cmd += ["--transcrever", "small"]
             _gravar({"id": ident, "estado": "iniciando", "arquivo": str(caminho.resolve()), "janela": janela, "autorizado": True,
                      "seguir": bool(d.get("seguir")), "webcam": webcam, "visual": visual, "sugestoes": [], "cenas": [],
-                     "processado": inicio, "janelas": 0, "mensagem": "Abrindo o processo de análise", "comecou": time.time()})
-            with ARQ_LOG.open("w", encoding="utf-8") as log:
+                     "processado": inicio, "janelas": 0, "mensagem": "Abrindo o processo de análise", "comecou": time.time()}, self.arq)
+            with self.log.open("w", encoding="utf-8") as log:
                 self.proc = subprocess.Popen(cmd, cwd=BASE, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log,
                                              creationflags=PRIORIDADE, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
         return self.estado()
 
     def estado(self) -> dict:
-        e = ler_estado()
+        e = ler_estado(self.arq)
         vivo = self.rodando()
         if not vivo and e.get("estado") in ("iniciando", "rodando"):
             if self.proc is not None:  # o processo morreu sem dizer por quê: mostra o fim do log
                 try:
-                    fim = [l for l in ARQ_LOG.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()][-1:]
+                    fim = [l for l in self.log.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()][-1:]
                 except OSError:
                     fim = []
                 e.update(estado="erro", mensagem="A análise parou de repente. " + (fim[0][:200] if fim else ""))
             else:  # painel reiniciado no meio de uma análise antiga
                 e.update(estado="parada", mensagem="A análise foi interrompida quando o painel fechou.")
-            _gravar(e)
+            _gravar(e, self.arq)
         return {**e, "rodando": vivo, "janelas_validas": list(JANELAS), "webcams": list(WEBCAMS)}
 
     def parar(self) -> dict:
@@ -399,15 +402,15 @@ class Analisador:
                 subprocess.run(["taskkill", "/T", "/F", "/PID", str(self.proc.pid)], capture_output=True,
                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 self.proc.wait(10)
-                e = ler_estado()
+                e = ler_estado(self.arq)
                 e.update(estado="parada", mensagem="Análise parada por você.", pid=0, terminou=time.time())
-                _gravar(e)
+                _gravar(e, self.arq)
         return self.estado()
 
     def criar_corte(self, d: dict, fila) -> dict:
         from . import vods  # só no painel: o processo de análise não precisa do editor nem das plataformas
 
-        e = ler_estado()
+        e = ler_estado(self.arq)
         if not e.get("autorizado"):
             raise ValueError("Esta análise não tem a confirmação de autorização do arquivo.")
         try:
@@ -415,18 +418,94 @@ class Analisador:
         except (IndexError, KeyError, ValueError):
             raise ValueError("Sugestão não encontrada. Atualize a lista.") from None
         info = vods.abrir_arquivo(e["arquivo"])
-        dados = {"tipo": "arquivo", "id": info["id"], "inicio": s["inicio"], "fim": s["fim"],
-                 "titulo": str(d.get("titulo") or "").strip()[:200] or s.get("fala", "")[:120], "streamer": str(d.get("streamer") or "")[:60]}
+        nome = Path(e["arquivo"]).name
+        streamer = str(d.get("streamer") or "")[:60] or login_gravacao(nome)
+        plataforma = plataforma_gravacao(nome)
+        dados = {"tipo": "arquivo", "id": info["id"], "inicio": s["inicio"], "fim": s["fim"], "streamer": streamer,
+                 "titulo": str(d.get("titulo") or "").strip()[:200] or s.get("fala", "")[:120], "plataforma": {"kick": "Kick", "twitch": "Twitch"}.get(plataforma),
+                 **origem_momento("analise", s, nome)}
         return fila.adicionar("corte", f"Corte da sugestão em {int(s['pico'] // 60)}:{int(s['pico'] % 60):02d}",
-                              lambda t: vods.criar_corte(dados, t)).publico()
+                              lambda t: vods.criar_corte(dados, t), None,
+                              {"streamer": streamer.lower(), "plataforma": plataforma, "origem": "gravacao", "gravacao": nome}).publico()
 
 
 analisador = Analisador()
+
+RE_GRAVACAO_NOME = re.compile(r"^(?P<login>[\w-]+?)_(?P<data>\d{4}-\d{2}-\d{2})_(?P<hora>\d{4})\.ts$")
+
+
+def login_gravacao(nome: str) -> str:
+    """Gravações se chamam canal_AAAA-MM-DD_HHMM.ts: o canal sai do nome do arquivo."""
+    m = RE_GRAVACAO_NOME.match(Path(nome).name)
+    return m["login"].lower() if m else ""
+
+
+def plataforma_gravacao(nome: str) -> str:
+    """De que plataforma é a gravação: pela gravação em memória, senão pelo log do yt-dlp (que tem o endereço da live)."""
+    nome = Path(nome).name
+    for g in list(captura.gravacoes.values()) if "captura" in globals() else []:
+        if Path(g.info.get("arquivo", "")).name == nome:
+            return g.info.get("plataforma", "twitch")
+    login = login_gravacao(nome)
+    try:
+        log = (DADOS / "ao_vivo" / f"captura_{login}.log").read_text(encoding="utf-8", errors="replace")[:4000]
+        if "kick.com" in log:
+            return "kick"
+        if "twitch.tv" in log:
+            return "twitch"
+    except OSError:
+        pass
+    for plat in ("Twitch", "Kick"):
+        if (LIVES / plat / Path(nome).stem).is_dir():
+            return plat.lower()
+    return ""
+
+
+def origem_momento(como: str, s: dict, gravacao: str, auto: int = 0) -> dict:
+    """Nota, motivos e fala do momento (chat ou análise) vão junto com o corte: dá para saber depois por que ele foi criado."""
+    motivos = [str(m) for m in (s.get("motivos") or [])][:8]
+    origem = {"tipo": "gravacao", "como": como, "gravacao": gravacao, "pico": s.get("pico"), "nota": s.get("nota"), "motivos": motivos,
+              "fala": str(s.get("fala") or "")[:300], "auto": auto, "quando": time.time()}
+    rotulo = "Chat" if como == "chat" else "Análise de voz e imagem"
+    return {"origem_info": origem, "nota": s.get("nota"),
+            "motivo": f"{'Clipado sozinho (nota ≥ ' + str(auto) + '). ' if auto else ''}{rotulo}: {', '.join(motivos) or 'pico'}."}
 
 
 RISO_CHAT = re.compile(r"k{4,}|(?:ha){3,}|(?:rs){3,}|(?:ja){3,}|kekw|lul|omegalul|lmao|😂|🤣", re.I)
 REACAO_CHAT = re.compile(r"\b(?:caralho|porra|mds|meu deus|que isso|nossa|absurdo|insano|mito|lend[aá]rio|pog\w*|wtf|omg|cringe)\b|w+o+w+|😱|😮|🔥", re.I)
 PEDE_CLIP = re.compile(r"\bclip(?:a|e|ou|ar|em)?\b|\bcorta\b|\bcortem\b", re.I)
+
+
+_JOB = None  # handle do Job do Windows: só fecha quando o painel termina, e aí o Windows encerra a gravação junto
+
+
+class _Limites(ctypes.Structure):
+    """JOBOBJECT_EXTENDED_LIMIT_INFORMATION (só o campo LimitFlags é usado)."""
+    _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64), ("LimitFlags", ctypes.c_uint32),
+                ("MinimumWorkingSetSize", ctypes.c_size_t), ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", ctypes.c_uint32),
+                ("Affinity", ctypes.c_size_t), ("PriorityClass", ctypes.c_uint32), ("SchedulingClass", ctypes.c_uint32),
+                ("IoInfo", ctypes.c_uint64 * 6), ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+
+def _abrir_preso_ao_painel(cmd: list, **opcoes) -> subprocess.Popen:
+    """Abre o processo suspenso, prende num Job "encerrar ao fechar" e só então solta. Assim até o processo-filho que o
+    Python do ambiente cria fica no Job, e fechar a janela do painel para a gravação (antes ela seguia sozinha)."""
+    global _JOB
+    if sys.platform != "win32":
+        return subprocess.Popen(cmd, **opcoes)
+    k = ctypes.windll.kernel32
+    if not _JOB:
+        job = k.CreateJobObjectW(None, None)
+        lim = _Limites(LimitFlags=0x2000)  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if job and k.SetInformationJobObject(job, 9, ctypes.byref(lim), ctypes.sizeof(lim)):  # 9 = JobObjectExtendedLimitInformation
+            _JOB = job
+    opcoes["creationflags"] = opcoes.get("creationflags", 0) | (0x4 if _JOB else 0)  # CREATE_SUSPENDED
+    proc = subprocess.Popen(cmd, **opcoes)
+    if _JOB:
+        k.AssignProcessToJobObject(_JOB, int(proc._handle))
+        ctypes.windll.ntdll.NtResumeProcess(int(proc._handle))
+    return proc
 
 
 def _chave(fonte: str, pico: float) -> str:
@@ -481,7 +560,7 @@ class ChatMomentos:
         return sum(1 for m in list(self.msgs) if m[0] > agora - 60)
 
 
-class Captura:
+class Gravacao:
     """Grava a live da Twitch ou da Kick (do ponto atual em diante) num arquivo que cresce, e liga a análise em janelas nele.
     Junto, lê o chat (Twitch) e marca os momentos em que ele explode. Com "clipar sozinho", momentos acima da nota viram cortes.
     Só com autorização confirmada; o vídeo fica no PC e os cortes saem direto desse arquivo."""
@@ -492,6 +571,7 @@ class Captura:
         self.info: dict = {}
         self.chat: ChatMomentos | None = None
         self.feitos: dict[str, str] = {}  # momento (fonte:pico) -> corte criado ("" enquanto cria)
+        self.analise: Analisador | None = None  # cada gravação tem a própria análise (voz, imagem), em processo separado
 
     def rodando(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
@@ -509,21 +589,19 @@ class Captura:
         with self.trava:
             if self.rodando():
                 raise ValueError(f"Já estou gravando a live de {self.info.get('login')}. Pare antes de começar outra.")
-            if analisador.rodando():
-                analisador.parar()
             pasta = DADOS / "ao_vivo"
             pasta.mkdir(parents=True, exist_ok=True)
             arquivo = pasta / f"{login}_{time.strftime('%Y-%m-%d_%H%M')}.ts"
-            log = (pasta / "captura.log").open("w", encoding="utf-8")
-            self.proc = subprocess.Popen([*YTDLP, "-f", f"best[height<={altura}]/best", "--hls-use-mpegts", "--no-part", "-o", str(arquivo),
-                                          url], cwd=BASE, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-                                         creationflags=PRIORIDADE)
+            log = (pasta / f"captura_{login}.log").open("w", encoding="utf-8")
+            self.analise = Analisador(PASTA / f"analise_{login}.json", PASTA / f"analise_{login}.log")
+            self.proc = _abrir_preso_ao_painel([*YTDLP, "-f", f"best[height<={altura}]/best", "--hls-use-mpegts", "--no-part", "-o", str(arquivo),
+                                                url], cwd=BASE, stdin=subprocess.DEVNULL, stdout=log, stderr=log, creationflags=PRIORIDADE)
             self.info = {"login": login, "plataforma": plataforma, "arquivo": str(arquivo), "comecou": time.time(), "qualidade": f"{altura}p", "erro": "",
                          "inicio_live": str(d.get("inicio_live") or ""), "estado": "conectando", "auto": max(0, min(int(d.get("auto") or 0), 100))}
             self.chat, self.feitos = ChatMomentos(), {}
         if plataforma == "twitch":  # o chat da Twitch já é lido pelo painel (só leitura); a gravação passa a escutar este canal
             from .canais import canais
-            canais.ouvintes = {login: self._ouvir}
+            canais.ouvintes[login] = self._ouvir
             threading.Thread(target=canais._ajustar_chats, daemon=True).start()
         threading.Thread(target=self._ligar_analise, args=(arquivo, bool(d.get("transcrever"))), daemon=True).start()
         threading.Thread(target=self._clipar_sozinho, args=(arquivo,), daemon=True).start()
@@ -547,21 +625,23 @@ class Captura:
         pico = dur - (time.time() - (m["t"] - ChatMomentos.REACAO_ATRASO))
         m.update(pico=round(max(0.0, pico), 1), inicio=round(max(0.0, pico - ChatMomentos.ANTES), 1), fim=round(max(1.0, pico + ChatMomentos.DEPOIS), 1))
 
-    def _criar(self, chave: str, s: dict, fila) -> object:
+    def _criar(self, chave: str, s: dict, fila, auto: int = 0) -> object:
         """Cria o corte de um momento (do chat ou da análise) e lembra qual corte saiu dele."""
         from . import vods
         info = vods.abrir_arquivo(self.info["arquivo"])
-        login = self.info["login"]
+        login, nome = self.info["login"], Path(self.info["arquivo"]).name
         dados = {"tipo": "arquivo", "id": info["id"], "inicio": s["inicio"], "fim": s["fim"], "streamer": login,
                  "plataforma": {"kick": "Kick"}.get(self.info.get("plataforma", ""), "Twitch"),
-                 "titulo": (s.get("fala") or "")[:120] or f"{login}: {', '.join(s.get('motivos') or [])[:100]}"}
+                 "titulo": (s.get("fala") or "")[:120] or f"{login}: {', '.join(s.get('motivos') or [])[:100]}",
+                 **origem_momento(chave.split(":")[0], s, nome, auto)}
         self.feitos[chave] = ""
 
         def trabalho(t):
             r = vods.criar_corte(dados, t)
             self.feitos[chave] = r.get("corte", "")
             return r
-        return fila.adicionar("corte", f"Corte de {login} ({s.get('nota', '')} pts)", trabalho, f"aovivo:{chave}")
+        return fila.adicionar("corte", f"Corte de {login} ({s.get('nota', '')} pts)", trabalho, f"aovivo:{chave}",
+                              {"streamer": login, "plataforma": self.info.get("plataforma", "twitch"), "origem": "gravacao", "gravacao": nome})
 
     def cortar_momento(self, d: dict, fila) -> dict:
         chat = self.chat
@@ -577,7 +657,7 @@ class Captura:
         """Com "clipar sozinho" ligado, todo momento (chat ou análise) com nota acima do limite vira corte, quando o trecho já foi gravado."""
         from .editor import sondar
         from .tarefas import fila
-        while self.rodando() or analisador.rodando() or self.info.get("estado") == "conectando":
+        while self.rodando() or (self.analise and self.analise.rodando()) or self.info.get("estado") == "conectando":
             time.sleep(5)
             limite = self.info.get("auto") or 0
             if not limite or not arquivo.is_file():
@@ -586,14 +666,14 @@ class Captura:
                 dur = float(sondar(arquivo)["dur"])
             except Exception:
                 continue
-            e = ler_estado()
+            e = ler_estado(self.analise.arq) if self.analise else {}
             candidatos = [(_chave("chat", m["pico"]), m) for m in list(self.chat.momentos if self.chat else []) if "fim" in m]
             if e.get("arquivo") == str(arquivo):  # sugestão da análise já fechada (não vai mais crescer)
                 candidatos += [(_chave("analise", s["pico"]), s) for s in e.get("sugestoes", []) if e.get("processado", 0) - s["pico_final"] > JUNTAR + 5]
             for chave, s in candidatos:
                 if s["nota"] >= limite and chave not in self.feitos and s["fim"] <= dur - 1:
                     try:
-                        self._criar(chave, s, fila)
+                        self._criar(chave, s, fila, limite)
                     except ValueError:
                         self.feitos[chave] = "erro"
 
@@ -610,14 +690,14 @@ class Captura:
                 break
             if arquivo.is_file() and arquivo.stat().st_size > 3_000_000:
                 try:
-                    analisador.iniciar({"caminho": str(arquivo), "autorizado": True, "janela": 25, "visual": "leve", "seguir": True, "transcrever": transcrever})
+                    self.analise.iniciar({"caminho": str(arquivo), "autorizado": True, "janela": 25, "visual": "leve", "seguir": True, "transcrever": transcrever})
                     self.info["estado"] = "gravando"
                 except ValueError as e:
                     self.info.update(estado="erro", erro=str(e))
                 return
             time.sleep(1)
         try:
-            fim = [l for l in (DADOS / "ao_vivo" / "captura.log").read_text(encoding="utf-8", errors="replace").splitlines() if "ERROR" in l][-1:]
+            fim = [l for l in (DADOS / "ao_vivo" / f"captura_{self.info['login']}.log").read_text(encoding="utf-8", errors="replace").splitlines() if "ERROR" in l][-1:]
         except OSError:
             fim = []
         motivo = fim[0].split("ERROR:", 1)[-1].strip()[:200] if fim else "a live não começou a chegar"
@@ -631,7 +711,7 @@ class Captura:
             if self.info and not manter_erro:
                 self.info.update(estado="parada", terminou=time.time())
         from .canais import canais
-        canais.ouvintes = {}
+        canais.ouvintes.pop(self.info.get("login"), None)
         return self.estado()  # a análise percebe que o arquivo parou de crescer e termina sozinha em 2 min
 
     def clipar(self, d: dict, fila) -> dict:
@@ -647,9 +727,13 @@ class Captura:
             raise ValueError(f"A gravação ainda tem só {int(total)} s. Espere mais um pouco e clique de novo.")
         login, plataforma = self.info["login"], {"kick": "Kick"}.get(self.info.get("plataforma", ""), "Twitch")
         fim = total - 1  # o fim estimado do arquivo que ainda cresce; 1 s de folga
+        nome = Path(self.info["arquivo"]).name
         dados = {"tipo": "arquivo", "id": info["id"], "inicio": max(0.0, fim - seg), "fim": fim, "plataforma": plataforma, "streamer": login,
-                 "titulo": str(d.get("titulo") or "").strip()[:200] or f"Clip de {login} às {time.strftime('%H:%M')}"}
-        return fila.adicionar("corte", f"Clipando os últimos {seg} s de {login}", lambda t: vods.criar_corte(dados, t)).publico()
+                 "titulo": str(d.get("titulo") or "").strip()[:200] or f"Clip de {login} às {time.strftime('%H:%M')}",
+                 "motivo": f"Clipar agora: os últimos {seg} s, no clique.",
+                 "origem_info": {"tipo": "gravacao", "como": "clipar_agora", "gravacao": nome, "segundos": seg, "pico": round(fim, 1), "quando": time.time()}}
+        return fila.adicionar("corte", f"Clipando os últimos {seg} s de {login}", lambda t: vods.criar_corte(dados, t), None,
+                              {"streamer": login, "plataforma": self.info.get("plataforma", "twitch"), "origem": "gravacao", "gravacao": nome}).publico()
 
     def estado(self) -> dict:
         if not self.info:
@@ -658,16 +742,104 @@ class Captura:
         tam = arq.stat().st_size if arq.is_file() else 0
         if self.info.get("estado") in ("conectando", "gravando") and not self.rodando():
             self.info["estado"] = "encerrada"  # a live acabou ou caiu
+            self.info.setdefault("terminou", arq.stat().st_mtime if arq.is_file() else time.time())
         chat = self.chat
         momentos = [{**{k: v for k, v in m.items() if k != "t"}, "quando": m["t"], "indice": i, "corte": self.feitos.get(_chave("chat", m["pico"])) if "pico" in m else None}
                     for i, m in enumerate(list(chat.momentos if chat else []))]
-        return {**self.info, "rodando": self.rodando(), "mb": round(tam / 1048576), "minutos": round((time.time() - self.info["comecou"]) / 60, 1),
+        fim = time.time() if self.rodando() else (self.info.get("terminou") or time.time())  # parada: o tempo para de contar
+        return {**self.info, "rodando": self.rodando(), "mb": round(tam / 1048576), "minutos": round((fim - self.info["comecou"]) / 60, 1),
                 "chat": {"lido": self.info.get("plataforma") == "twitch", "msgs_min": chat.por_minuto(time.time()) if chat else 0,
                          "total": chat.total if chat else 0, "momentos": momentos[::-1][:30]},
-                "feitos": {k: v for k, v in self.feitos.items() if k.startswith("analise:")}}
+                "feitos": {k: v for k, v in self.feitos.items() if k.startswith("analise:")},
+                "analise": self.analise.estado() if self.analise else {}}
 
 
-captura = Captura()
+class Capturas:
+    """Várias lives gravando ao mesmo tempo (uma Gravacao por canal). Gravar é leve (só copia o vídeo); cada análise é um
+    processo de prioridade baixa, então o limite existe para não pesar o PC."""
+
+    MAX = 4
+
+    def __init__(self) -> None:
+        self.trava = threading.Lock()
+        self.gravacoes: dict[str, Gravacao] = {}
+
+    def _vivas(self) -> list[Gravacao]:
+        return [g for g in self.gravacoes.values() if g.rodando() or g.info.get("estado") == "conectando"]
+
+    def rodando(self) -> bool:
+        return bool(self._vivas())
+
+    def arquivos(self) -> set[str]:
+        """Nomes dos arquivos que este painel está gravando agora."""
+        return {Path(g.info["arquivo"]).name for g in self._vivas()}
+
+    def _achar(self, d: dict) -> Gravacao:
+        login = str(d.get("login") or "").strip().lower()
+        if login in self.gravacoes:
+            return self.gravacoes[login]
+        vivas = self._vivas()
+        if not login and len(vivas) == 1:
+            return vivas[0]
+        if not login and len(self.gravacoes) == 1:
+            return next(iter(self.gravacoes.values()))
+        raise ValueError("Gravação não encontrada. Atualize a tela.")
+
+    def iniciar(self, d: dict) -> dict:
+        login = re.sub(r"^https?://(www\.)?(twitch\.tv|kick\.com)/", "", str(d.get("login") or "").strip().lower()).strip("/@ ").split("/")[0]
+        with self.trava:
+            atual = self.gravacoes.get(login)
+            if atual and (atual.rodando() or atual.info.get("estado") == "conectando"):
+                raise ValueError(f"A live de {login} já está sendo gravada.")
+            if len(self._vivas()) >= self.MAX:
+                raise ValueError(f"Dá para gravar até {self.MAX} lives ao mesmo tempo. Pare uma antes de começar outra.")
+            g = Gravacao()
+            estado = g.iniciar(d)
+            self.gravacoes[g.info["login"]] = g
+            for velho in sorted(self.gravacoes, key=lambda k: self.gravacoes[k].info.get("comecou", 0))[:-8]:
+                if not self.gravacoes[velho].rodando():  # guarda só as 8 mais recentes
+                    del self.gravacoes[velho]
+        return estado
+
+    def parar(self, d: dict | None = None) -> dict:
+        """Sem login: para todas."""
+        if d and d.get("login"):
+            return self._achar(d).parar()
+        for g in self._vivas():
+            g.parar()
+        return self.estado()
+
+    def parar_arquivo(self, nome: str) -> None:
+        for g in self.gravacoes.values():
+            if Path(g.info.get("arquivo", "")).name == nome:
+                g.parar()
+
+    def clipar(self, d: dict, fila) -> dict:
+        return self._achar(d).clipar(d, fila)
+
+    def cortar_momento(self, d: dict, fila) -> dict:
+        return self._achar(d).cortar_momento(d, fila)
+
+    def cortar_analise(self, d: dict, fila) -> dict:
+        g = self._achar(d)
+        if not g.analise:
+            raise ValueError("Esta gravação ainda não tem análise.")
+        return g.analise.criar_corte({**d, "streamer": g.info.get("login", "")}, fila)
+
+    def configurar_auto(self, d: dict) -> dict:
+        return self._achar(d).configurar_auto(d)
+
+    def lista(self) -> list[dict]:
+        estados = [g.estado() for g in self.gravacoes.values() if g.info]
+        return sorted(estados, key=lambda e: (not (e.get("rodando") or e.get("estado") == "conectando"), -e.get("comecou", 0)))
+
+    def estado(self) -> dict:
+        """A gravação principal (a mais recente ainda gravando, senão a última): telas que mostram uma só."""
+        lista = self.lista()
+        return lista[0] if lista else {}
+
+
+captura = Capturas()
 
 
 def main() -> None:
@@ -681,6 +853,7 @@ def main() -> None:
     p.add_argument("--visual", default="leve", choices=["leve", "completo"])
     p.add_argument("--seguir", action="store_true", help="espera o arquivo crescer (OBS gravando)")
     p.add_argument("--transcrever", default="", help="modelo do Whisper para os trechos sugeridos (opcional)")
+    p.add_argument("--estado", default="", help="arquivo de estado desta análise (cada gravação ao vivo tem o seu)")
     analisar(p.parse_args())
 
 

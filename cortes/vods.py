@@ -6,6 +6,7 @@ e nada aqui contorna login, DRM ou gravações restritas: se a plataforma recusa
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import subprocess
 import threading
@@ -169,12 +170,18 @@ def extrair_trecho(entradas: list[str], inicio: float, duracao: float, destino: 
                 time.sleep(2)
 
         threading.Thread(target=vigiar, daemon=True).start()
-        for linha in proc.stdout:
-            if linha.startswith("out_time_us=") and linha[12:].strip().isdigit():
-                visto[0] = time.time()
-                if tarefa:
-                    fr = min(1.0, int(linha[12:]) / 1e6 / max(duracao, 0.1))
-                    tarefa.avancar(faixa[0] + (faixa[1] - faixa[0]) * fr, f"Processando o trecho ({nome}) {round(fr * 100)}%")
+        try:
+            for linha in proc.stdout:
+                if linha.startswith("out_time_us=") and linha[12:].strip().isdigit():
+                    visto[0] = time.time()
+                    if tarefa:
+                        fr = min(1.0, int(linha[12:]) / 1e6 / max(duracao, 0.1))
+                        tarefa.avancar(faixa[0] + (faixa[1] - faixa[0]) * fr, f"Processando o trecho ({nome}) {round(fr * 100)}%")
+        except BaseException:  # tarefa cancelada no meio: encerra o ffmpeg e apaga o arquivo pela metade
+            proc.kill()
+            proc.wait()
+            temp.unlink(missing_ok=True)
+            raise
         erro = proc.stderr.read()
         if proc.wait() == 0 and temp.exists():
             temp.replace(destino)
@@ -201,6 +208,16 @@ def _chat_twitch(bruto: Path, base: float) -> list[dict]:
                       "n": str((c.get("commenter") or {}).get("display_name") or "")[:25], "m": texto[:220],
                       "c": cor.upper() if re.fullmatch(r"#[0-9a-fA-F]{6}", cor) else ""})
     return sorted(saida, key=lambda x: x["t"])
+
+
+def _origem(o) -> dict | None:
+    """De onde o corte veio e por que (clipe e views, regra do automático, momento e nota da gravação): vai junto no cortes.json."""
+    if not isinstance(o, dict):
+        return None
+    try:
+        return o if len(json.dumps(o, ensure_ascii=False)) <= 6000 else None
+    except (TypeError, ValueError):
+        return None
 
 
 def criar_corte(d: dict, tarefa=None) -> dict:
@@ -274,10 +291,16 @@ def criar_corte(d: dict, tarefa=None) -> dict:
             chat_msg = "O chat desta gravação não pôde ser baixado."
 
     lista = ler_json(pasta / "cortes" / "cortes.json", []) or []
-    lista.append({"nota": None, "manual": True, "inicio": round(ini, 2), "fim": round(fim, 2), "desloc": 0, "pico": round(ini, 2),
-                  "arquivo": f"{stem}.mp4", "texto": titulo_corte, "motivo": "Trecho escolhido manualmente.",
-                  "momento_na_live": _hora(ini), "criado": time.time(),
-                  "formato": d.get("formato") if d.get("formato") in editor.FORMATOS else "9:16"})
+    nota = d.get("nota")
+    item = {"nota": int(nota) if isinstance(nota, (int, float)) and 0 <= nota <= 100 else None, "manual": True,  # manual: a fonte fica em fontes/
+            "inicio": round(ini, 2), "fim": round(fim, 2), "desloc": 0, "pico": round(ini, 2),
+            "arquivo": f"{stem}.mp4", "texto": titulo_corte, "motivo": str(d.get("motivo") or "").strip()[:300] or "Trecho escolhido manualmente.",
+            "momento_na_live": _hora(ini), "criado": time.time(),
+            "formato": d.get("formato") if d.get("formato") in editor.FORMATOS else "9:16"}
+    origem = _origem(d.get("origem_info"))
+    if origem:
+        item["origem"] = origem
+    lista.append(item)
     gravar_json(pasta / "cortes" / "cortes.json", lista)
     corte_id = f"{plataforma}/{pasta.name}/{stem}.mp4"
 

@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from cortes import descobrir, editor, efeitos, referencias, sons, vods
+from cortes import armazenamento, descobrir, editor, efeitos, producao, referencias, sons, vods
 from cortes.canais import canais
 from cortes.config import DADOS, LIVES, ffmpeg, ler_json
 from cortes.fontes import eh_link
@@ -104,10 +104,11 @@ def listar_lives() -> list[dict]:
                 "momento": c.get("momento_na_live", ""), "texto": c.get("texto", ""),
                 "motivo": c.get("motivo", ""), "duracao": round(c["fim"] - c["inicio"]), "arquivo": c["arquivo"],
                 "url": f"/video/{rel}", "thumb": f"/thumb/{rel}?t={momento:.1f}", "editados": eds,
+                "criado": c.get("criado"), "inicio": c.get("inicio"), "fim": c.get("fim"), "origem": c.get("origem"),
             })
         if cortes:
             lives.append({"plataforma": live.parent.name, "titulo": info.get("titulo", live.name), "streamer": info.get("streamer", ""),
-                          "pasta": f"{base}/cortes", "cortes": cortes})
+                          "pasta": f"{base}/cortes", "cortes": cortes, "nome": live.name, "origem_live": str(info.get("origem") or "")})
     return lives
 
 
@@ -509,12 +510,15 @@ ROTAS = {
     "/api/grafico": _grafico,
     "/api/clip/anexar": _anexar_clip,
     "/api/canais/remover": lambda d: (canais.remover(str(d.get("plataforma", "")), str(d.get("login", ""))), {"ok": True})[1],
+    "/api/tarefas/cancelar": lambda d: fila.cancelar(str(d.get("id", ""))),
+    "/api/tarefas/limpar": lambda _: fila.limpar(),
 }
 # Módulos independentes registram as próprias rotas: GET recebe a consulta (dict de listas), POST recebe o JSON.
 ROTAS_GET: dict = {}
-for _modulo in (descobrir, referencias):
+for _modulo in (descobrir, referencias, armazenamento, producao):
     ROTAS.update(_modulo.POST)
     ROTAS_GET.update(_modulo.GET)
+ROTAS_GET["/api/producao"] = producao._rota(lambda consulta: producao.listar(listar_lives(), consulta))
 
 
 class Servidor(ThreadingHTTPServer):

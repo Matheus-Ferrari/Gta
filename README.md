@@ -25,9 +25,10 @@ Dê dois cliques em `abrir_painel.cmd`. O painel abre em `http://127.0.0.1:8765`
 | Lives | Ao vivo agora, Clipes em alta (por idioma, criador e quem clipou), Favoritos, Monitoramento, Meus canais e Clips criados |
 | Gerar Cortes | Manual: abre gravação ou arquivo, marca início e fim. Automático: sugere cortes com nota |
 | Meus Cortes | Reels exportados e cortes por estado: só link, pronto para editar, em edição, exportado |
-| Editor | Layout, webcam, títulos, legendas, timeline e exportação |
+| Produção | Cada streamer com os cortes separados por origem (automático, clipe baixado, gravação da live, VOD/arquivo) e o motivo de cada um; marcar ★ para manter e excluir o resto; Resumo da live (clipes mais vistos da live inteira e picos) e Compilado (os melhores clipes num vídeo 16:9 com capítulos) |
+| Editor | Layout, webcam, títulos, legendas, timeline e exportação (no editorial, o tamanho da logo, do nome e do @ fica em Sua marca) |
 | Referências | Links de vídeos de referência, análise de arquivos seus e a biblioteca de boas práticas (com fonte e data) |
-| Configurações | Credenciais da Twitch e da Kick |
+| Configurações | Credenciais da Twitch e da Kick e Espaço em disco |
 
 ## Fluxo
 

@@ -362,15 +362,30 @@ def salvar_template(nome: str, projeto: dict | None) -> list[dict]:
     return lista
 
 
+TAMANHOS_MARCA = {"logo": (60, 300, 110), "nome": (20, 110, 40), "arroba": (14, 80, 32)}  # px no cabeçalho editorial: mínimo, máximo, padrão
+
+
+def _tamanhos(t) -> dict:
+    t = t if isinstance(t, dict) else {}
+    saida = {}
+    for k, (menor, maior, padrao) in TAMANHOS_MARCA.items():
+        try:
+            saida[k] = max(menor, min(maior, int(t.get(k) or padrao)))
+        except (TypeError, ValueError):
+            saida[k] = padrao
+    return saida
+
+
 def marca() -> dict:
     m = ler_json(ARQ_MARCA, {}) or {}
-    return {"nome": str(m.get("nome") or "")[:40], "arroba": str(m.get("arroba") or "")[:40], "logo": str(m.get("logo") or "")[:64]}
+    return {"nome": str(m.get("nome") or "")[:40], "arroba": str(m.get("arroba") or "")[:40], "logo": str(m.get("logo") or "")[:64],
+            "tamanhos": _tamanhos(m.get("tamanhos"))}
 
 
 def salvar_marca(d: dict) -> dict:
     logo = re.sub(r"[^\w.-]", "", str(d.get("logo") or ""))[:64]
     gravar_json(ARQ_MARCA, {"nome": str(d.get("nome") or "").strip()[:40], "arroba": str(d.get("arroba") or "").strip()[:40],
-                            "logo": logo if logo and (GRAFICOS / logo).is_file() else ""})
+                            "logo": logo if logo and (GRAFICOS / logo).is_file() else "", "tamanhos": _tamanhos(d.get("tamanhos"))})
     return marca()
 
 
@@ -1119,9 +1134,14 @@ def exportar(corte_id: str, projeto: dict, tarefa=None, chat: list[dict] | None 
         for nome, opcoes in codificadores(p["qualidade"]).items():
             proc = subprocess.Popen(base + opcoes + [temp.name], cwd=pasta, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                     encoding="utf-8", errors="replace", creationflags=SEM_JANELA)
-            for linha in proc.stdout:
-                if linha.startswith("out_time_us=") and tarefa and linha[12:].strip().isdigit():
-                    tarefa.avancar(min(0.98, int(linha[12:]) / 1e6 / duracao), f"Renderizando ({nome})")
+            try:
+                for linha in proc.stdout:
+                    if linha.startswith("out_time_us=") and tarefa and linha[12:].strip().isdigit():
+                        tarefa.avancar(min(0.98, int(linha[12:]) / 1e6 / duracao), f"Renderizando ({nome})")
+            except BaseException:  # tarefa cancelada no meio do render: encerra o ffmpeg para o arquivo pela metade poder ser apagado
+                proc.kill()
+                proc.wait()
+                raise
             erro = proc.stderr.read()
             if proc.wait() == 0:
                 usado = nome

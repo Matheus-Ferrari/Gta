@@ -279,7 +279,8 @@
       if (!aut.checked) { prog.textContent = 'Marque a autorização para continuar.'; return; }
       ir.disabled = true;
       try {
-        const t = await api('/api/descobrir/clip/editar', { id: x.id, titulo: x.titulo, canal: x.canal_login || x.canal, plataforma: x.plataforma || 'twitch', autorizado: true });
+        const t = await api('/api/descobrir/clip/editar', { id: x.id, titulo: x.titulo, canal: x.canal_login || x.canal, plataforma: x.plataforma || 'twitch', autorizado: true,
+          views: x.views, autor: x.autor, criado: x.criado, url: x.url, duracao: x.duracao });
         const r = await aguardarTarefa(t.id, y => { prog.textContent = `${y.mensagem} (${Math.round(y.progresso * 100)}%)`; });
         d.close(); irPara('editor', { corte: r.corte });
       } catch (e) { prog.textContent = e.message; prog.className = 'dica erro'; ir.disabled = false; }
@@ -413,7 +414,43 @@
       el('p', { className: 'dica', textContent: kick ? 'Clipes da Kick pelos endereços públicos do site (a API oficial da Kick não tem clipes): até 20 por consulta, juntando os mais vistos e os mais recentes do período.' : 'Clipes pela API oficial da Twitch.' }));
     /* Gerar conteúdo: os primeiros N da lista do jeito que está filtrada e ordenada viram cortes (e Reels, se houver layout salvo). */
     function botaoGerar(lista) {
-      gerar.replaceChildren(lista.length ? botao(`Gerar conteúdo dos Top ${Math.min(10, lista.length)}`, () => dialogoGerar(lista), 'btn mini', { title: 'Baixa os clipes do topo desta lista, cria os cortes e renderiza no template' }) : '');
+      gerar.replaceChildren(lista.length ? botao(`Gerar conteúdo dos Top ${Math.min(10, lista.length)}`, () => dialogoGerar(lista), 'btn mini', { title: 'Baixa os clipes do topo desta lista, cria os cortes e renderiza no template' }) : '',
+        botao('Automático', () => dialogoAuto(), 'btn leve mini', { title: 'Deixa programado: de tempos em tempos pega os clipes mais vistos deste filtro que ainda não viraram corte' }));
+    }
+    /* Automático: guarda o filtro atual e, de tempos em tempos, gera conteúdo dos mais vistos que ainda não viraram corte. */
+    async function dialogoAuto() {
+      let m = { streamers: [], templates: [] };
+      try { m = await api('/api/descobrir/modelos'); } catch { /* segue sem a lista */ }
+      const nomeFiltro = c.origem === 'categoria' ? `${kick ? 'Kick' : 'Twitch'} · ${((D.est && D.est.categorias) || []).concat([]).find(x => x.id === c.cat)?.nome || 'categoria'}${c.idioma ? ' · ' + c.idioma.toUpperCase() : ''}`
+        : c.origem === 'canal' ? `${c.nome || c.canal} (${kick ? 'Kick' : 'Twitch'})` : `${((D.criadores && D.criadores.criadores) || []).find(x => x.id === c.criador)?.nome || 'favorito'} (${kick ? 'Kick' : 'Twitch'})`;
+      const sel = (opcoes, valor) => el('select', {}, ...opcoes.map(([v, t]) => el('option', { value: v, textContent: t, selected: String(v) === String(valor) })));
+      const quantos = sel([[3, '3 clipes'], [5, '5 clipes'], [10, '10 clipes']], 5);
+      const aCada = sel([[10, 'a cada 10 min'], [20, 'a cada 20 min'], [30, 'a cada 30 min'], [60, 'a cada 1 hora'], [120, 'a cada 2 horas']], 20);
+      const minimo = sel([[0, 'qualquer'], [5, '5 ou mais'], [10, '10 ou mais'], [25, '25 ou mais'], [50, '50 ou mais'], [100, '100 ou mais']], 10);
+      const comLayout = (m.streamers || []).includes(String(c.origem === 'canal' ? (c.nome || c.canal) : '').toLowerCase());
+      const modelo = el('select', {}, el('option', { value: 'streamer', textContent: 'Layout salvo do streamer (renderiza se houver)', selected: true }),
+        ...(m.templates || []).map(t => el('option', { value: t, textContent: `Template: ${t}` })), el('option', { value: 'nenhum', textContent: 'Só baixar e cortar' }));
+      const aut = el('input', { type: 'checkbox' });
+      const resumo = el('p', { className: 'dica', style: 'margin:0' });
+      const pintarResumo = () => { resumo.textContent = `${aCada.selectedOptions[0].textContent.replace('a cada', 'A cada')}, pega os ${quantos.value} clipes mais vistos de ${nomeFiltro} ${PERIODO[c.intervalo]}${c.quem === 'comunidade' ? ' (feitos por espectadores)' : c.quem === 'proprio' ? ' (feitos pelo próprio streamer)' : ''}, com ${minimo.value > 0 ? `${minimo.value} visualizações ou mais` : 'qualquer número de visualizações'}, que ainda não viraram corte, e gera o conteúdo. Roda com o painel aberto; ao reabrir, a rodada atrasada acontece na hora.`; };
+      [quantos, aCada, minimo].forEach(s => { s.onchange = pintarResumo; }); pintarResumo();
+      const d = el('dialog', { className: 'tpl-dlg', style: 'width:min(560px,calc(100vw - 32px))' });
+      d.append(el('div', { style: 'padding:18px;display:grid;gap:12px' },
+        el('h2', { className: 'tit', style: 'margin:0', textContent: `Automático · ${nomeFiltro}` }), resumo,
+        el('div', { className: 'opcoes' }, el('label', {}, 'Quantos por vez', quantos), el('label', {}, 'Frequência', aCada), el('label', {}, 'Visualizações mínimas', minimo)),
+        el('label', {}, 'Template', modelo),
+        comLayout ? null : el('p', { className: 'dica', style: 'margin:0', textContent: 'Para sair renderizado: abra um corte deste streamer no editor, monte o template e clique em “Salvar para este streamer”. Sem isso, os cortes ficam prontos para você aplicar o template.' }),
+        el('label', { className: 'marcar autoriza' }, aut, 'Tenho autorização para usar os clipes destes canais (canal meu, permissão do criador ou conteúdo liberado para cortes).'),
+        el('div', { className: 'ferramentas', style: 'margin:0' },
+          botao('Ligar automático', acao(async () => {
+            await api('/api/auto/salvar', { autorizado: aut.checked, nome: `${nomeFiltro} · ${PERIODO[c.intervalo]}`, quem: c.quem || '', quantos: Number(quantos.value), a_cada: Number(aCada.value), minimo: Number(minimo.value), modelo: modelo.value,
+              consulta: { plataforma: kick ? 'kick' : '', origem: c.origem, canal: c.origem === 'canal' ? c.canal : '', nome: c.origem === 'canal' ? c.nome : '', categoria: c.origem === 'categoria' ? c.cat : '', idioma: c.origem === 'categoria' ? c.idioma : '', intervalo: c.intervalo, criador: c.origem === 'criador' ? c.criador : '' } });
+            d.close(); avisar('Automático ligado: a primeira rodada começa em instantes. Acompanhe e pause na Atividade.');
+            if (window.abrirAtividade) window.abrirAtividade();
+          }), 'btn mini'),
+          botao('Cancelar', () => d.close()))));
+      d.addEventListener('close', () => d.remove());
+      document.body.append(d); d.showModal();
     }
     async function dialogoGerar(lista) {
       let m = { streamers: [], templates: [] };
@@ -435,9 +472,12 @@
         el('label', { className: 'marcar autoriza' }, aut, 'Tenho autorização para usar estes clipes (canal meu, permissão do criador ou conteúdo liberado para cortes).'),
         el('div', { className: 'ferramentas', style: 'margin:0' },
           botao('Gerar', acao(async () => {
-            const escolhidos = lista.slice(0, Number(qtd.value)).map(x => ({ id: x.id, plataforma: x.plataforma || 'twitch', titulo: x.titulo, canal: x.canal_login || x.canal }));
-            const r = await api('/api/descobrir/clips/conteudo', { clips: escolhidos, modelo: modelo.value, autorizado: aut.checked });
-            d.close(); avisar(`${r.tarefas.length} clipes na fila. Eles aparecem em Meus Cortes${modelo.value === 'nenhum' ? '' : ' (os Reels em “Reel exportado”)'}.`);
+            const escolhidos = lista.slice(0, Number(qtd.value)).map((x, i) => ({ id: x.id, plataforma: x.plataforma || 'twitch', titulo: x.titulo, canal: x.canal_login || x.canal,
+              views: x.views, autor: x.autor, criado: x.criado, url: x.url, duracao: x.duracao, posicao: i + 1 }));
+            const nomeLista = [dados && dados.titulo, PERIODO[c.intervalo], (RANKINGS.find(r => r[0] === c.ranking) || [])[1]].filter(Boolean).join(' · ');
+            const r = await api('/api/descobrir/clips/conteudo', { clips: escolhidos, modelo: modelo.value, autorizado: aut.checked, lista: nomeLista, total: lista.length });
+            d.close(); avisar(`${r.tarefas.length} clipes na fila. Acompanhe na Atividade; prontos, eles ficam em Meus Cortes${modelo.value === 'nenhum' ? '' : ' (os Reels em “Reel exportado”)'}.`);
+            if (window.abrirAtividade) window.abrirAtividade();
           }), 'btn mini'),
           botao('Cancelar', () => d.close()))));
       d.addEventListener('close', () => d.remove());

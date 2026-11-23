@@ -20,6 +20,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from . import canais as canais_mod
 from .ao_vivo import analisador, captura
@@ -44,12 +45,18 @@ RESERVA_FUNDO, RESERVA_TELA = 100, 10  # pontos do balde da Twitch guardados ant
 RE_RP_TAG = re.compile(r"^(gta)?rp(br|pt|pc)?$|roleplay", re.I)
 RE_RP_TITULO = re.compile(r"\b(gta\s?)?rp\b|role\s?-?play", re.I)
 # Kick: lives, canais e categorias pela API oficial. Clipes só existem nos endpoints públicos do site (a API oficial não tem):
-# 20 por consulta e sem paginação, então a lista junta "mais vistos" e "mais recentes" do período.
+# 20 por página. Na lista de um canal o cursor funciona: o Vice Clips percorre as páginas "mais recentes" até sair do
+# período e só então ordena por visualização (senão os 20 mais vistos "do dia" seriam da live de ontem e os de hoje sumiriam).
+# Na lista da categoria a Kick ignora o cursor: fica uma página de cada consulta.
 ARQ_KICK = PASTA / "kick_idiomas.json"
 KICK_SITE = "https://kick.com/api/v2"
-KICK_CONSULTAS = {"7d": [("view", "week"), ("view", "day"), ("date", "day")],  # a primeira também vale para os canais extras
-                  "1h": [("date", "day"), ("view", "day")], "6h": [("date", "day"), ("view", "day")]}
-KICK_CONSULTAS_PADRAO = [("view", "day"), ("date", "day")]
+KICK_CONSULTAS = {  # (ordem, período da Kick, páginas no máximo); a primeira também vale, com 1 página, para os canais extras
+    "1h": [("date", "day", 6), ("view", "day", 1)],
+    "6h": [("date", "day", 20), ("view", "day", 1)],
+    "24h": [("date", "day", 25), ("view", "day", 3)],
+    "7d": [("view", "week", 6), ("view", "day", 2), ("date", "day", 2)],
+}
+KICK_CONSULTAS_PADRAO = KICK_CONSULTAS["24h"]
 RE_KICK = re.compile(r"[a-z0-9_-]{2,25}")
 
 
@@ -149,18 +156,46 @@ def _clip(d: dict) -> dict:
             "destaque": bool(d.get("is_featured"))}
 
 
-def _clipe_para_corte(cid: str, kick: bool, titulo: str, canal: str, t) -> dict:
-    """Baixa o arquivo público do clipe (Twitch: mp4; Kick: HLS gravado como .ts) e cria um corte com ele inteiro."""
+PERIODOS = {"1h": "na última hora", "6h": "nas últimas 6 horas", "24h": "nas últimas 24 horas", "7d": "nos últimos 7 dias"}
+
+
+def _info_clipe(x: dict, cid: str, kick: bool, titulo: str, canal: str) -> dict:
+    """O que se sabia do clipe na hora em que ele foi escolhido: views daquele momento, quem clipou e quando."""
+    def num(v, tipo=int):
+        try:
+            return max(0, tipo(v or 0))
+        except (TypeError, ValueError):
+            return 0
+    url = str(x.get("url") or "")
+    return {"id": cid, "plataforma": "kick" if kick else "twitch", "titulo": titulo, "canal": canal, "views": num(x.get("views")),
+            "autor": str(x.get("autor") or "")[:60], "criado": str(x.get("criado") or "")[:40], "url": url[:300] if url.startswith("https://") else "",
+            "duracao": round(num(x.get("duracao"), float), 1)}
+
+
+def _motivo_clipe(o: dict) -> str:
+    """A frase que explica por que este clipe virou corte (aparece em Meus Cortes e na Produção)."""
+    c = o.get("clipe") or {}
+    views = f"{c.get('views', 0)} views na hora da escolha"
+    if o.get("tipo") == "auto":
+        return f"Automático: {o.get('posicao')}º mais visto {PERIODOS.get(o.get('intervalo'), 'no período')} entre {o.get('total')} clipes ({views})."
+    if o.get("como") == "live":
+        return f"Resumo da live: {o.get('posicao')}º mais visto da live inteira{' (' + o['live']['titulo'][:60] + ')' if (o.get('live') or {}).get('titulo') else ''} ({views})."
+    if o.get("como") == "gerar":
+        return f"Gerar conteúdo: {o.get('posicao')}º da lista{' ' + o['lista'] if o.get('lista') else ''} ({views})."
+    return f"Clipe escolhido por você ({views})."
+
+
+def baixar_clipe(cid: str, kick: bool, t, progresso: float = 0.1) -> Path:
+    """Baixa o arquivo público do clipe (Twitch: mp4; Kick: HLS gravado como .ts) para DADOS/clipes. Já baixado: reaproveita."""
     import subprocess
     import sys as _sys
-    from . import vods
     from .fontes import YTDLP
     nome_plat = "Kick" if kick else "Twitch"
     pasta = DADOS / "clipes"
     pasta.mkdir(parents=True, exist_ok=True)
     arquivo = pasta / f"{cid}.{'ts' if kick else 'mp4'}"
     if not arquivo.is_file():
-        t.avancar(0.1, "Baixando o clipe")
+        t.avancar(progresso, "Baixando o clipe")
         if kick:  # o endereço do vídeo vem da própria Kick, não da tela
             fonte = str((_kick_site(f"/clips/{cid}").get("clip") or {}).get("video_url") or "")
             if not re.fullmatch(r"https://clips\.kick\.com/[\w./-]+\.m3u8", fonte):
@@ -173,10 +208,18 @@ def _clipe_para_corte(cid: str, kick: bool, titulo: str, canal: str, t) -> dict:
         if r.returncode != 0 or not arquivo.is_file():
             erro = (r.stderr.strip().splitlines() or ["erro desconhecido"])[-1]
             raise RuntimeError(f"A {nome_plat} não entregou o clipe: {erro[:200]}")
-    info = vods.abrir_arquivo(str(arquivo))
+    return arquivo
+
+
+def _clipe_para_corte(cid: str, kick: bool, titulo: str, canal: str, t, origem: dict | None = None) -> dict:
+    """Baixa o clipe e cria um corte com ele inteiro (o porquê da escolha vai junto, em origem)."""
+    from . import vods
+    nome_plat = "Kick" if kick else "Twitch"
+    info = vods.abrir_arquivo(str(baixar_clipe(cid, kick, t)))
     t.avancar(0.4, "Criando o corte")
     return vods.criar_corte({"tipo": "arquivo", "id": info["id"], "inicio": 0, "fim": max(1.0, info["duracao"] - 0.05),
-                             "titulo": titulo, "streamer": canal, "plataforma": nome_plat}, t)
+                             "titulo": titulo, "streamer": canal, "plataforma": nome_plat,
+                             "origem_info": origem, "motivo": _motivo_clipe(origem) if origem else ""}, t)
 
 
 def _renderizar_no_modelo(corte: str, modelo: str, titulo: str, canal: str, t) -> dict:
@@ -575,14 +618,26 @@ class Descobrir:
                 "atualizado": quando, "proxima": quando + CACHE_LISTA, "agora": time.time(), "limite": _limite()}
 
     def _buscar_kick(self, caminhos: list[str], consultas: list[tuple], segundos: int, extras: list[str] | None = None) -> list[dict]:
-        """extras: canais buscados só com a primeira consulta (os mais vistos do período), para não pesar no site da Kick."""
+        """Canal: segue o cursor até a página passar do início do período (ou o limite de páginas). Categoria: 1 página.
+        extras: canais buscados só com a primeira consulta e 1 página, para não pesar no site da Kick."""
         agora, achados = time.time(), {}
-        for caminho, lista in [(c, consultas) for c in caminhos] + [(c, consultas[:1]) for c in extras or []]:
-            for ordem, tempo in lista:
-                for d in _kick_site(caminho, {"sort": ordem, "time": tempo}).get("clips") or []:
-                    c = _clip_kick(d)
-                    if agora - _ts(c["criado"]) <= segundos:
-                        achados[c["id"]] = c
+        planos = [(c, consultas) for c in caminhos] + [(c, [(*consultas[0][:2], 1)]) for c in extras or []]
+        for caminho, lista in planos:
+            for ordem, tempo, paginas in lista:
+                cursor, vistos = None, set()
+                for pagina in range(1 if "/categories/" in caminho else paginas):
+                    r = _kick_site(caminho, {"sort": ordem, "time": tempo, **({"cursor": cursor} if cursor else {})})
+                    clips = [_clip_kick(d) for d in r.get("clips") or []]
+                    if not clips or all(c["id"] in vistos for c in clips):
+                        break
+                    for c in clips:
+                        vistos.add(c["id"])
+                        if agora - _ts(c["criado"]) <= segundos:
+                            achados[c["id"]] = c
+                    cursor = r.get("nextCursor")
+                    if not cursor or (ordem == "date" and agora - min(_ts(c["criado"]) for c in clips) > segundos):
+                        break  # a página já passou do início do período
+                    time.sleep(0.15)  # devagar com o site da Kick
         self._amostrar(achados.values(), agora)
         return sorted(achados.values(), key=lambda c: -c["views"])
 
@@ -911,8 +966,10 @@ class Descobrir:
             raise ValueError("Clipe inválido.")
         titulo, canal = str(d.get("titulo") or "")[:200], str(d.get("canal") or "")[:60]
         kick = d.get("plataforma") == "kick"
+        origem = {"tipo": "clipe", "como": "editar", "quando": time.time(), "clipe": _info_clipe(d, cid, kick, titulo, canal)}
         return fila.adicionar("corte", f"Editando o clipe de {canal or ('Kick' if kick else 'Twitch')}",
-                              lambda t: _clipe_para_corte(cid, kick, titulo, canal, t), f"editar:{cid}").publico()
+                              lambda t: _clipe_para_corte(cid, kick, titulo, canal, t, origem), f"editar:{cid}",
+                              {"streamer": canal.lower(), "plataforma": "kick" if kick else "twitch", "origem": "clipe"}).publico()
 
     def modelos(self, _=None) -> dict:
         """O que dá para usar na renderização automática: layouts salvos por streamer e templates salvos no editor."""
@@ -921,7 +978,7 @@ class Descobrir:
         return {"streamers": sorted(k for k, v in streamers.items() if isinstance(v, dict) and v.get("layout")),
                 "templates": [t.get("nome") for t in editor.templates() if t.get("nome")]}
 
-    def gerar_conteudo(self, d: dict) -> dict:
+    def gerar_conteudo(self, d: dict, origens: dict | None = None) -> dict:
         """Clipes em alta -> conteúdo: baixa cada clipe, cria o corte e renderiza o Reel no layout do streamer (ou num template salvo),
         com o título do clipe na manchete. Sem layout, para no corte: o template é escolhido no editor."""
         if not d.get("autorizado"):
@@ -930,17 +987,33 @@ class Descobrir:
         if not itens:
             raise ValueError("Nenhum clipe para gerar.")
         modelo = str(d.get("modelo") or "streamer")[:40]
+        lista_nome = re.sub(r"\s+", " ", str(d.get("lista") or "")).strip()[:160]
+        como = "live" if d.get("como") == "live" else "gerar"  # live: escolhidos no Resumo da live (os mais vistos da live inteira)
+        lv = d.get("live") if isinstance(d.get("live"), dict) else {}
+        try:
+            total = max(len(itens), int(d.get("total") or 0))
+            inicio_live = float(lv.get("inicio") or 0)
+        except (TypeError, ValueError):
+            total, inicio_live = len(itens), 0.0
+        live = {"live": {"titulo": str(lv.get("titulo") or "")[:160], "inicio": inicio_live, "link": str(lv.get("link") or "")[:300]}} if como == "live" else {}
         tarefas = []
-        for x in itens:
+        for n, x in enumerate(itens, 1):
             cid = re.sub(r"[^\w-]", "", str(x.get("id") or ""))[:120]
             if not cid:
                 continue
             kick, titulo, canal = x.get("plataforma") == "kick", str(x.get("titulo") or "")[:200], str(x.get("canal") or "")[:60]
+            try:
+                posicao = max(1, int(x.get("posicao") or n))
+            except (TypeError, ValueError):
+                posicao = n
+            origem = (origens or {}).get(cid) or {"tipo": "clipe", "como": como, "quando": time.time(), "posicao": posicao, "total": total,
+                                                  "lista": lista_nome, "modelo": modelo, "clipe": _info_clipe(x, cid, kick, titulo, canal), **live}
 
-            def trabalho(t, cid=cid, kick=kick, titulo=titulo, canal=canal):
-                r = _clipe_para_corte(cid, kick, titulo, canal, t)
+            def trabalho(t, cid=cid, kick=kick, titulo=titulo, canal=canal, origem=origem):
+                r = _clipe_para_corte(cid, kick, titulo, canal, t, origem)
                 return {**r, **_renderizar_no_modelo(r["corte"], modelo, titulo, canal, t)} if modelo != "nenhum" else r
-            tarefas.append(fila.adicionar("corte", f"Conteúdo: {titulo or cid} ({canal})", trabalho, f"conteudo:{cid}").publico())
+            meta = {"streamer": canal.lower(), "plataforma": "kick" if kick else "twitch", "origem": origem["tipo"], "regra": origem.get("regra", "")}
+            tarefas.append(fila.adicionar("corte", f"Conteúdo: {titulo or cid} ({canal})", trabalho, f"conteudo:{cid}", meta).publico())
         return {"tarefas": tarefas, "modelo": modelo}
 
     # ------------------------------------------------------ trabalho de fundo
@@ -1099,6 +1172,129 @@ class Descobrir:
 
 descobrir = Descobrir()
 
+# ------------------------------------------------------ automático: gerar conteúdo sozinho de tempos em tempos
+ARQ_AUTO = PASTA / "automaticos.json"
+ARQ_AUTO_ANTIGAS = PASTA / "automaticos_excluidos.json"
+A_CADA = (10, 20, 30, 60, 120)  # minutos
+MAX_REGRAS, MAX_FEITOS, MAX_HISTORICO = 10, 600, 40
+
+
+class Automaticos:
+    """De tempos em tempos, os clipes mais vistos de um filtro de Clipes em alta (um canal, um favorito ou a categoria) que
+    ainda não viraram corte são baixados e viram conteúdo, igual ao botão Gerar conteúdo. Nunca pega o mesmo clipe duas
+    vezes. Só roda com o painel aberto: ao reabrir, a regra atrasada roda na hora."""
+
+    def __init__(self) -> None:
+        self.trava = threading.Lock()
+        r = ler_json(ARQ_AUTO, None)
+        self.regras: list[dict] = r if isinstance(r, list) else []
+        self.iniciado = False
+
+    def _salvar(self) -> None:
+        with self.trava:
+            gravar_json(ARQ_AUTO, self.regras)
+
+    def iniciar(self) -> None:
+        if not self.iniciado:
+            self.iniciado = True
+            threading.Thread(target=self._laco, daemon=True).start()
+
+    def listar(self, _=None) -> dict:
+        return {"regras": [{**{k: v for k, v in r.items() if k not in ("feitos", "historico")}, "n_feitos": len(r.get("feitos", []))} for r in self.regras],
+                "agora": time.time()}
+
+    def _achar(self, ident) -> dict:
+        r = next((r for r in self.regras if r["id"] == str(ident or "")), None)
+        if not r:
+            raise ValueError("Automático não encontrado.")
+        return r
+
+    def salvar(self, d: dict) -> dict:
+        if not d.get("autorizado"):
+            raise ValueError("Confirme que você tem autorização para usar os clipes desses canais.")
+        c = d.get("consulta") if isinstance(d.get("consulta"), dict) else {}
+        consulta = {k: str(c.get(k) or "").strip()[:120] for k in ("plataforma", "origem", "canal", "nome", "categoria", "idioma", "intervalo", "criador")}
+        if consulta["intervalo"] not in INTERVALOS:
+            raise ValueError("Período inválido.")
+        a_cada = int(d.get("a_cada") or 30)
+        regra = {"id": _novo_id(), "nome": re.sub(r"\s+", " ", str(d.get("nome") or "")).strip()[:90] or "Clipes em alta", "consulta": consulta,
+                 "quem": d.get("quem") if d.get("quem") in ("proprio", "comunidade") else "", "quantos": max(1, min(int(d.get("quantos") or 5), 10)),
+                 "a_cada": a_cada if a_cada in A_CADA else 30, "minimo": max(0, min(int(d.get("minimo") or 0), 1_000_000)),
+                 "modelo": str(d.get("modelo") or "streamer")[:40], "ativo": True, "criada": time.time(), "proxima": time.time(), "ultima": None, "feitos": []}
+        with self.trava:
+            if len(self.regras) >= MAX_REGRAS:
+                raise ValueError(f"O limite é de {MAX_REGRAS} automáticos. Exclua um na Atividade.")
+            self.regras.append(regra)
+        self._salvar()
+        return self.listar()
+
+    def acao(self, d: dict) -> dict:
+        r, acao = self._achar(d.get("id")), str(d.get("acao") or "")
+        with self.trava:
+            if acao == "pausar":
+                r["ativo"] = False
+            elif acao == "retomar":
+                r.update(ativo=True, proxima=time.time())
+            elif acao == "agora":
+                r.update(ativo=True, proxima=0)
+            elif acao == "excluir":
+                self.regras.remove(r)
+                antigas = ler_json(ARQ_AUTO_ANTIGAS, []) or []  # guarda o que ela pegou: a Produção continua sabendo de onde veio cada corte
+                gravar_json(ARQ_AUTO_ANTIGAS, (antigas + [{k: r.get(k) for k in ("id", "nome", "consulta", "minimo", "feitos", "historico")}])[-30:])
+            else:
+                raise ValueError("Ação inválida.")
+        self._salvar()
+        return self.listar()
+
+    def _laco(self) -> None:
+        while True:
+            time.sleep(15)
+            for r in list(self.regras):
+                if r.get("ativo") and time.time() >= r.get("proxima", 0):
+                    self._rodar(r)
+
+    def _rodar(self, r: dict) -> None:
+        """Uma rodada: ranqueia os clipes do filtro pelas views e pega os primeiros que ainda não viraram corte e passam do
+        mínimo. Guarda o resumo (quantos vistos, já feitos, abaixo do mínimo) e, em cada corte, o porquê da escolha."""
+        agora = time.time()
+        r["proxima"] = agora + r["a_cada"] * 60
+        try:
+            dados = descobrir.clips({k: [v] for k, v in r["consulta"].items() if v})
+            lista = dados["clips"]
+            proprio = lambda x: bool(x.get("autor_id")) and x.get("autor_id") == x.get("canal_id")
+            if r["quem"] == "proprio":
+                lista = [x for x in lista if proprio(x)]
+            elif r["quem"] == "comunidade":
+                lista = [x for x in lista if not proprio(x)]
+            ranking = sorted(lista, key=lambda x: -x["views"])
+            posicao = {x["id"]: i for i, x in enumerate(ranking, 1)}
+            feitos = set(r["feitos"])
+            elegiveis = [x for x in ranking if x["id"] not in feitos and x["views"] >= r["minimo"]]
+            novos = elegiveis[:r["quantos"]]
+            resumo = {"quando": agora, "vistos": len(lista), "ja_feitos": sum(1 for x in ranking if x["id"] in feitos),
+                      "abaixo": sum(1 for x in ranking if x["id"] not in feitos and x["views"] < r["minimo"]), "elegiveis": len(elegiveis),
+                      "novos": len(novos), "erro": ""}
+            if novos:
+                origens = {}
+                for i, x in enumerate(novos, 1):
+                    canal = x.get("canal_login") or x["canal"]
+                    origens[x["id"]] = {"tipo": "auto", "regra": r["id"], "regra_nome": r["nome"], "quando": agora, "intervalo": r["consulta"].get("intervalo"),
+                                        "minimo": r["minimo"], "quantos": r["quantos"], "posicao": posicao[x["id"]], "escolha": i, "total": len(lista),
+                                        "ja_feitos": resumo["ja_feitos"], "abaixo": resumo["abaixo"], "elegiveis": len(elegiveis),
+                                        "clipe": _info_clipe(x, x["id"], x.get("plataforma") == "kick", x["titulo"], canal)}
+                descobrir.gerar_conteudo({"autorizado": True, "modelo": r["modelo"], "clips": [
+                    {"id": x["id"], "plataforma": x.get("plataforma", "twitch"), "titulo": x["titulo"], "canal": x.get("canal_login") or x["canal"]} for x in novos]}, origens)
+                r["feitos"] = (r["feitos"] + [x["id"] for x in novos])[-MAX_FEITOS:]
+            r["ultima"] = {**resumo, "clipes": [{"id": x["id"], "titulo": x["titulo"][:80], "views": x["views"], "canal": x["canal"], "autor": x.get("autor", ""),
+                                                 "criado": x.get("criado", ""), "posicao": posicao[x["id"]]} for x in novos]}
+        except Exception as e:  # nunca derruba o laço: o erro aparece na Atividade e a próxima rodada tenta de novo
+            r["ultima"] = {"quando": agora, "novos": 0, "vistos": 0, "erro": str(e)[:200], "clipes": []}
+        r["historico"] = (r.get("historico", []) + [r["ultima"]])[-MAX_HISTORICO:]
+        self._salvar()
+
+
+automaticos = Automaticos()
+
 # ------------------------------------------------------ sugestões de criadores por idioma
 ARQ_SUGESTOES = PASTA / "sugestoes.json"
 SUGESTOES_INICIAIS = {
@@ -1235,6 +1431,7 @@ def sugestao_editar(d: dict) -> dict:
 
 def iniciar() -> None:
     descobrir.iniciar()
+    automaticos.iniciar()
 
 
 def _rota(funcao):
@@ -1259,9 +1456,10 @@ GET: dict = {caminho: _rota(f) for caminho, f in {
     "/api/descobrir/categorias/buscar": descobrir.buscar_categorias,
     "/api/descobrir/criadores": descobrir.criadores_listar,
     "/api/descobrir/monitor": descobrir.monitor_listar,
-    "/api/descobrir/analise": lambda _: {**analisador.estado(), "captura": captura.estado()},
+    "/api/descobrir/analise": lambda _: {**analisador.estado(), "captura": captura.estado(), "capturas": captura.lista()},
     "/api/descobrir/sugestoes": sugestoes,
     "/api/descobrir/modelos": descobrir.modelos,
+    "/api/auto": automaticos.listar,
 }.items()}
 
 POST: dict = {caminho: _rota(f) for caminho, f in {
@@ -1283,8 +1481,11 @@ POST: dict = {caminho: _rota(f) for caminho, f in {
     "/api/descobrir/sugestoes/editar": sugestao_editar,
     "/api/descobrir/aovivo/iniciar": captura.iniciar,
     "/api/descobrir/clip/editar": descobrir.editar_clipe,
-    "/api/descobrir/aovivo/parar": lambda _: captura.parar(),
+    "/api/descobrir/aovivo/parar": lambda d: captura.parar(d),
+    "/api/descobrir/aovivo/corte-analise": lambda d: captura.cortar_analise(d, fila),
     "/api/descobrir/clips/conteudo": descobrir.gerar_conteudo,
+    "/api/auto/salvar": automaticos.salvar,
+    "/api/auto/acao": automaticos.acao,
     "/api/descobrir/aovivo/clipar": lambda d: captura.clipar(d, fila),
     "/api/descobrir/aovivo/momento": lambda d: captura.cortar_momento(d, fila),
     "/api/descobrir/aovivo/auto": captura.configurar_auto,

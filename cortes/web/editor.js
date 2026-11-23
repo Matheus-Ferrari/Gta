@@ -10,6 +10,47 @@ const ESTILOS = [
   { nome: 'Limpa', estilo: { fonte: 'Segoe UI Black', tamanho: 66, cor: '#FFFFFF', destaque: '#FFE500', contorno: '#000000', espessura: 5, sombra: 0, maiusculas: false, modo: 'nenhum' } },
 ];
 const vid = (id, nome, regiao, x, y, w, h, extra = {}) => ({ id, nome, tipo: 'video', regiao, caixa: { x, y, w, h }, zoom: 1, panX: 0, panY: 0, borda: 0, bordaCor: '#FF2D95', visivel: true, ...extra });
+/* Jogo sem zoom: a webcam desenhada na live fica numa lateral; o recorte do jogo é a imagem inteira sem essa faixa. */
+function recorteSemWebcam() {
+  const r = S.p.regioes.webcam;
+  if (!r) return { x: 0, y: 0, w: 1, h: 1 };
+  if (r.x + r.w / 2 >= 0.5 && r.x > 0.45) return { x: 0, y: 0, w: +Math.max(0.3, r.x - 0.005).toFixed(4), h: 1 };
+  if (r.x + r.w / 2 < 0.5 && r.x + r.w < 0.55) { const ini = Math.min(0.7, r.x + r.w + 0.005); return { x: +ini.toFixed(4), y: 0, w: +(1 - ini).toFixed(4), h: 1 }; }
+  return { x: 0, y: 0, w: 1, h: 1 }; // webcam no meio da tela: tirar a faixa cortaria o jogo ao meio
+}
+function camJogoInteiro() {
+  const rec = recorteSemWebcam(), f = (S.d && S.d.fonte) || {}, prop = (rec.w * (f.w || 1920)) / (rec.h * (f.h || 1080));
+  const jh = Math.min(Math.round(W / prop), Math.round(H * 0.55)), ch = Math.max(Math.round(H * 0.3), H - jh - 320);
+  return [vid('cam', 'Webcam', 'webcam', 0, 0, W, ch), vid('jogo', 'Gameplay', 'propria', 0, ch, W, jh, { recorte: rec })];
+}
+/* A webcam foi marcada de novo: o "sem zoom" refaz o recorte e as alturas; os outros templates com câmera desviam dela de novo. */
+function webcamMudou() {
+  const pr = PRESETS[S.p.preset];
+  if (S.p.preset === 'cam_jogo_inteiro') {
+    const [cam, jogo] = camJogoInteiro(), c = S.p.camadas.find(k => k.id === 'cam' && k.tipo === 'video'), j = S.p.camadas.find(k => k.id === 'jogo' && k.tipo === 'video');
+    if (c) c.caixa = cam.caixa;
+    if (j) Object.assign(j, { caixa: jogo.caixa, regiao: 'propria', recorte: jogo.recorte });
+  } else if (pr && pr.cam) desviarDaWebcam();
+  else return;
+  S.sujo = true;
+  pintarPainel(); pintarSelecao();
+}
+/* Templates com a câmera separada: o recorte da gameplay foge da webcam desenhada na live, para ela não aparecer duas vezes. */
+function desviarDaWebcam() {
+  const r = S.p.regioes.webcam, f = (S.d && S.d.fonte) || {};
+  if (!r) return;
+  const g = S.p.regioes.gameplay || { x: 0, y: 0, w: 1, h: 1 }, prop = (g.w * (f.w || 1920)) / (g.h * (f.h || 1080));
+  for (const c of S.p.camadas) {
+    if (c.tipo !== 'video' || c.regiao !== 'gameplay') continue;
+    const alvo = c.caixa.w / c.caixa.h;
+    if (prop <= alvo) continue; // o recorte já usa a largura toda: não há para onde mover
+    const cw = g.w * (alvo / prop) / (c.zoom || 1), folga = (g.w - cw) / 2, meio = g.x + g.w / 2;
+    const centro = meio + (c.panX || 0) * folga;
+    if (centro + cw / 2 <= r.x || centro - cw / 2 >= r.x + r.w) continue; // já não pega a webcam
+    const alvoCentro = r.x + r.w / 2 >= meio ? r.x - cw / 2 : r.x + r.w + cw / 2; // encosta no lado oposto à webcam
+    c.panX = +Math.max(-1, Math.min(1, (alvoCentro - meio) / folga)).toFixed(3);
+  }
+}
 const chatCol = (x, y, w, h) => ({ id: 'chat', nome: 'Chat', tipo: 'chat', caixa: { x, y, w, h }, tamanho: 30, cor: '#FFFFFF', contorno: '#000000', espessura: 3, fundoCor: '#000000', fundoAlfa: 0.45, visivel: true });
 /* A mesma fonte horizontal entra em várias camadas, cada uma com o seu recorte (webcam, gameplay, chat ou recorte próprio). */
 const PRESETS = {
@@ -17,6 +58,8 @@ const PRESETS = {
     f: () => [vid('cam', 'Webcam', 'webcam', 0, 0, 1080, 720), vid('jogo', 'Gameplay', 'gameplay', 0, 900, 1080, 1020)], mapa: [['c', 0, 0, 9, 6], ['t', 0, 6, 9, 1.5], ['j', 0, 7.5, 9, 8.5]] },
   cam_jogo: { nome: 'Webcam em cima, jogo embaixo', desc: 'Sem faixa: webcam grande e gameplay.', cam: true, dividir: true, legY: 1420, fmt: ['9:16', '1:1'],
     f: () => [vid('cam', 'Webcam', 'webcam', 0, 0, 1080, 800), vid('jogo', 'Gameplay', 'gameplay', 0, 800, 1080, 1120)], mapa: [['c', 0, 0, 9, 6.7], ['j', 0, 6.7, 9, 9.3]] },
+  cam_jogo_inteiro: { nome: 'Webcam + jogo sem zoom', desc: 'Webcam grande em cima e o jogo na largura toda, sem o zoom de preencher. A faixa onde fica a webcam original sai do jogo, então ela não aparece duas vezes.', cam: true, legY: 1700, fmt: ['9:16'],
+    f: () => camJogoInteiro(), mapa: [['c', 0, 0, 9, 7], ['j', 0, 7, 9, 6.4]] },
   jogo_cam_topo: { nome: 'Jogo cheio + cam no topo', desc: 'Gameplay em tela cheia com a webcam pequena no topo.', cam: true, legY: 1500,
     f: () => [vid('jogo', 'Gameplay', 'gameplay', 0, 0, W, H), vid('cam', 'Webcam', 'webcam', Math.round(W / 2 - 230), 90, 460, 340, { borda: 6 })], fmt: ['9:16', '1:1', '16:9'], mapa: [['j', 0, 0, 9, 16], ['c', 2.5, .8, 4, 3]] },
   jogo_cheio: { nome: 'Gameplay em tela cheia', desc: 'Só o jogo, recortado sem distorcer.', cam: false, f: () => [vid('jogo', 'Gameplay', 'gameplay', 0, 0, W, H)], fmt: ['9:16', '1:1', '16:9'], mapa: [['j', 0, 0, 9, 16]] },
@@ -395,7 +438,7 @@ function pintarRegioes() {
         if (nome.startsWith('propria:')) sel.recorte = q; else S.p.regioes[nome] = q;
         n.style.left = `${q.x * 100}%`; n.style.top = `${q.y * 100}%`; n.style.width = `${q.w * 100}%`; n.style.height = `${q.h * 100}%`;
         S.sujo = true;
-      }, () => mudou(false));
+      }, () => { if (nome === 'webcam') webcamMudou(); mudou(false); });
     };
     wrap.append(n);
   }
@@ -405,7 +448,7 @@ async function detectarWebcam() {
   msgFonte('Procurando webcam no vídeo...');
   try {
     const r = await api('/api/editor/detectar-webcam', { corte: S.id });
-    if (r.encontrada) { S.p.regioes.webcam = r.regiao; pintarRegioes(); S.sujo = true; }
+    if (r.encontrada) { S.p.regioes.webcam = r.regiao; pintarRegioes(); webcamMudou(); S.sujo = true; }
     msgFonte(r.mensagem);
     return !!r.encontrada;
   } catch (e) { msgFonte(e.message); return false; }
@@ -434,8 +477,9 @@ function camadasEditorial(escuro) {
     vid('jogo', 'Gameplay', 'gameplay', 0, 500, W, 700, { papel: 'jogo' }), vid('cam', 'Webcam', 'webcam', 0, 1200, W, 720, { papel: 'cam' }),
     { id: 'ed_linha', papel: 'linha', nome: 'Linha', tipo: 'forma', caixa: { x: 0, y: 1200, w: W, h: 6 }, cor: o.linhaCor || '#FFFFFF', alfa: 1, visivel: true }];
   if (m.logo) c.push({ id: 'ed_logo', papel: 'logo', nome: 'Logo', tipo: 'imagem', arquivo: m.logo, caixa: { x: 56, y: 150, w: 110, h: 110 }, opacidade: 1, circular: true, visivel: true });
-  c.push(txt('ed_nome', 'nome', m.nome || 'Seu canal', 40, { visivel: !!m.nome }),
-    txt('ed_arroba', 'arroba', `@${(m.arroba || 'seucanal').replace(/^@/, '')}`, 32, { fonte: 'Arial', cor: k.arroba, visivel: !!m.arroba }),
+  const tm = m.tamanhos || {};
+  c.push(txt('ed_nome', 'nome', m.nome || 'Seu canal', tm.nome || 40, { visivel: !!m.nome }),
+    txt('ed_arroba', 'arroba', `@${(m.arroba || 'seucanal').replace(/^@/, '')}`, tm.arroba || 32, { fonte: 'Arial', cor: k.arroba, visivel: !!m.arroba }),
     txt('ed_manchete', 'manchete', novoTitulo().texto, 62));
   return c;
 }
@@ -495,10 +539,11 @@ function aplicarPreset(id) {
   if (pr.editorial) {
     if (!p.regioes.webcam) { p.regioes.webcam = { x: 0.7, y: 0.03, w: 0.27, h: 0.3 }; destacar('#ed-caixa-fonte'); msgFonte('Arraste o retângulo rosa até a câmera do streamer na fonte original.'); }
     const mesmo = PRESETS[p.preset] && PRESETS[p.preset].editorial;
-    p.opcoes = { jogo: 0.5, margemTopo: 150, linhaEsp: 6, linhaCor: '#FFFFFF', destaque: '#E10613', inverter: false, ...(mesmo ? p.opcoes : {}) };
+    p.opcoes = { jogo: 0.5, margemTopo: 150, linhaEsp: 6, linhaCor: '#FFFFFF', destaque: '#E10613', inverter: false, logoTam: ((S.d.marca || {}).tamanhos || {}).logo || 110, ...(mesmo ? p.opcoes : {}) };
     if (mesmo) { trocarCorEditorial(!!pr.escuro); p.preset = id; }
     else { p.camadas = [...camadasEditorial(!!pr.escuro), ...p.camadas.filter(c => c.tipo === 'imagem' && !c.papel)]; p.preset = id; }
     const fronteira = layoutEditorial();
+    desviarDaWebcam();
     Object.assign(p.legenda, { x: W / 2, y: fronteira });
     S.sel = null; S.sujo = true;
     pintarRegioes(); pintarPresets(); pintarPainel(); pintarSelecao(); mudou(false);
@@ -541,6 +586,7 @@ function aplicarPreset(id) {
   p.preset = id;
   S.sel = null;
   reorganizar();
+  if (pr.cam) desviarDaWebcam();
   pintarRegioes(); pintarPresets(); pintarPainel(); pintarSelecao(); mudou(false);
 }
 function definirFormato(f, aplicar = true) {
@@ -662,18 +708,34 @@ function opcoesEditorial() {
 /* Marca: logo, nome e @ usados nos templates. Nada é preenchido por padrão. */
 function secaoMarca() {
   const m = S.d.marca || { nome: '', arroba: '', logo: '' };
+  /* Tamanho da logo, do nome e do @ no cabeçalho editorial: muda na prévia na hora; "Salvar marca" guarda para os próximos cortes. */
+  const ed = !!(PRESETS[S.p.preset] && PRESETS[S.p.preset].editorial);
+  const tam = { logo: 110, nome: 40, arroba: 32, ...(m.tamanhos || {}) };
+  if (ed) { tam.logo = S.p.opcoes.logoTam || tam.logo; const n = papel('nome'), a = papel('arroba'); if (n) tam.nome = n.tamanho; if (a) tam.arroba = a.tamanho; }
+  const aplicarTam = () => {
+    if (!ed) return;
+    S.p.opcoes.logoTam = tam.logo; const n = papel('nome'), a = papel('arroba');
+    if (n) n.tamanho = tam.nome; if (a) a.tamanho = tam.arroba;
+    layoutEditorial(); S.sujo = true; pintarSelecao(); clearTimeout(S.tm5); S.tm5 = setTimeout(() => mudou(false), 300);
+  };
+  const faixaTam = (rot, k, min, max) => {
+    const r = el('label', { className: 'todo' }, `${rot}: ${tam[k]} px`);
+    r.append(el('input', { type: 'range', min, max, step: 2, value: tam[k], oninput: e => { tam[k] = Number(e.target.value); r.firstChild.textContent = `${rot}: ${tam[k]} px`; aplicarTam(); } }));
+    return r;
+  };
   const nome = el('input', { value: m.nome, placeholder: 'Nome do canal', maxLength: 40, autocomplete: 'off' }), arroba = el('input', { value: m.arroba, placeholder: '@seucanal', maxLength: 40, autocomplete: 'off' });
   const foto = m.logo ? el('img', { className: 'marca-logo', src: `/grafico/${m.logo}`, alt: '' }) : el('span', { className: 'marca-logo vazio', textContent: 'sem logo' });
   const salvar = tentar(async (logo = m.logo) => {
-    S.d.marca = await api('/api/marca', { nome: nome.value, arroba: arroba.value.replace(/^@/, ''), logo });
+    S.d.marca = await api('/api/marca', { nome: nome.value, arroba: arroba.value.replace(/^@/, ''), logo, tamanhos: tam });
     if (PRESETS[S.p.preset] && PRESETS[S.p.preset].editorial) {  // atualiza o cabeçalho que está na tela
       const k = S.d.marca, n = papel('nome'), a = papel('arroba');
       if (n) { n.texto = k.nome || n.texto; n.visivel = !!k.nome; }
       if (a) { a.texto = `@${(k.arroba || 'seucanal').replace(/^@/, '')}`; a.visivel = !!k.arroba; }
       if (k.logo) { const l = papel('logo'); if (l) { l.arquivo = k.logo; l.visivel = true; } else S.p.camadas.push({ id: 'ed_logo', papel: 'logo', nome: 'Logo', tipo: 'imagem', arquivo: k.logo, caixa: { x: 56, y: 150, w: 110, h: 110 }, opacidade: 1, circular: true, visivel: true }); }
+      S.p.opcoes.logoTam = tam.logo; if (n) n.tamanho = tam.nome; if (a) a.tamanho = tam.arroba;
       layoutEditorial(); mudou(false);
     }
-    avisar('Marca salva.'); pintarPainel();
+    avisar('Marca salva: os próximos cortes já abrem com esses tamanhos.'); pintarPainel();
   });
   const enviar = () => {
     const entrada = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp' });
@@ -686,6 +748,8 @@ function secaoMarca() {
   };
   return [el('div', { className: 'sec', textContent: 'Sua marca' }),
     el('div', { className: 'marca-linha' }, foto, el('div', { className: 'grupo', style: 'flex:1' }, el('label', {}, 'Nome', nome), el('label', {}, '@', arroba))),
+    el('div', { className: 'grupo' }, faixaTam('Tamanho da logo', 'logo', 60, 300), faixaTam('Tamanho do nome', 'nome', 20, 110), faixaTam('Tamanho do @', 'arroba', 14, 80),
+      ed ? null : el('p', { className: 'dica todo', style: 'margin:0', textContent: 'Aparece nos templates Editorial Branco e Editorial Preto.' })),
     el('div', { className: 'ferramentas', style: 'margin:0' },
       el('button', { className: 'btn leve mini', type: 'button', textContent: m.logo ? 'Trocar logo (PNG)' : 'Enviar logo (PNG)', onclick: enviar }),
       el('button', { className: 'btn mini', type: 'button', textContent: 'Salvar marca', onclick: () => salvar() })),
