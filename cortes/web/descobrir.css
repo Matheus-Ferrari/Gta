@@ -1,0 +1,107 @@
+/* Tela Descobrir: usa as variáveis de app.css (:root) */
+.dc-rot { align-self: center; color: var(--fraco); font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.dc-aviso { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-color: rgba(255, 179, 71, .45); }
+.dc-aviso h3 { color: var(--sol); font-size: 15px; margin-bottom: 2px; }
+.dc-aviso p { color: var(--suave); font-size: 13px; }
+#tela-descobrir a.foto { text-decoration: none; }
+.dc-permissoes { padding: 10px 16px; margin-bottom: 14px; }
+.dc-permissoes summary { font-weight: 600; }
+.dc-permissoes .permissoes { margin-top: 8px; }
+.dc-erro { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; grid-column: 1 / -1; }
+
+.dc-cats { align-items: center; }
+.dc-chip-cat { display: inline-flex; align-items: center; }
+.dc-chip-cat .chip { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.dc-x { height: 32px; width: 28px; padding: 0; background: rgba(255, 255, 255, .03); border: 1px solid var(--linha2); border-left: 0; border-radius: 0 16px 16px 0; color: var(--fraco); font-size: 15px; line-height: 1; }
+.dc-x:hover { color: var(--erro); }
+.dc-busca { display: flex; gap: 6px; align-items: center; }
+.dc-busca input { width: 230px; height: 32px; margin: 0; }
+.chip.dc-fixo { display: inline-flex; align-items: center; cursor: default; }
+
+.dc-lives { display: grid; grid-template-columns: repeat(auto-fill, minmax(225px, 1fr)); gap: 14px; }
+.dc-live .foto { display: flex; text-decoration: none; }
+.dc-pos { position: absolute; right: 8px; top: 8px; padding: 1px 8px; border-radius: 6px; background: rgba(7, 8, 20, .82); color: var(--ciano); font: 700 14px Bahnschrift, sans-serif; }
+.dc-meta { color: var(--fraco); font-size: 12px; }
+.dc-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.dc-tags span { padding: 0 7px; border: 1px solid var(--linha2); border-radius: 10px; color: var(--suave); font-size: 11px; line-height: 18px; }
+.dc-duas { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 18px; }
+.dc-duas .bloco { margin: 0; }
+
+.dc-clips { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+.dc-metricas { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 10px; font-size: 13px; }
+.dc-cresce { padding: 1px 7px; border-radius: 5px; background: rgba(77, 255, 176, .14); color: var(--ok); font-weight: 700; font-size: 12px; }
+.dc-cresce.parado { background: rgba(255, 255, 255, .06); color: var(--suave); }
+.dc-espera { color: var(--fraco); font-size: 12px; }
+.dc-mais { display: flex; justify-content: center; margin-top: 14px; }
+.dc-mais:empty { display: none; }
+
+.dc-novo, .dc-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.dc-criadores { display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); gap: 14px; align-items: start; }
+.dc-criador { display: grid; gap: 10px; align-content: start; padding: 14px; }
+.dc-criador.on { border-color: rgba(255, 64, 160, .7); box-shadow: var(--brilho); }
+.dc-criador h3 { display: flex; align-items: center; gap: 8px; font-size: 15.5px; overflow-wrap: anywhere; }
+.dc-sem { color: var(--fraco); font-size: 13px; font-style: italic; }
+.dc-contas { display: grid; gap: 6px; }
+.dc-conta, .dc-cand .linha-item { flex-wrap: wrap; }
+.dc-conta .nome, .dc-cand .nome { flex: 1 1 220px; white-space: normal; }
+.dc-conta small, .dc-cand small { white-space: normal; }
+.dc-form { display: grid; grid-template-columns: 110px minmax(0, 1fr) 130px auto; gap: 8px; align-items: end; padding: 10px; border: 1px dashed var(--linha2); border-radius: 10px; }
+.dc-form .todo { grid-column: 1 / -1; }
+.dc-form input, .dc-form select, .dc-renomear input { height: 32px; }
+.dc-renomear { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
+.dc-renomear input { margin: 0; }
+.dc-cand { display: grid; gap: 6px; padding: 10px; border: 1px solid rgba(45, 226, 230, .3); border-radius: 10px; background: rgba(45, 226, 230, .04); }
+.dc-foto { flex: none; width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
+
+.dc-marcas { display: grid; gap: 8px; margin: 12px 0 4px; }
+.dc-status { margin-top: 10px; }
+.dc-nota { flex: none; min-width: 36px; padding: 2px 6px; border-radius: 7px; text-align: center; color: #fff; font: 700 14px Bahnschrift, sans-serif;
+  background: linear-gradient(135deg, var(--rosa), var(--roxo)); box-shadow: 0 0 10px rgba(255, 45, 149, .45); }
+
+@media (max-width: 780px) {
+  .dc-duas, .dc-novo, .dc-add { grid-template-columns: minmax(0, 1fr); }
+  .dc-criadores { grid-template-columns: minmax(0, 1fr); }
+  .dc-form { grid-template-columns: minmax(0, 1fr); }
+  .dc-aviso { flex-direction: column; align-items: flex-start; }
+  .dc-busca input { width: 100%; }
+}
+
+.dc-seg { color: var(--ciano) !important; font-weight: 700; }
+.dc-desc { display: block; color: var(--fraco); font-style: italic; overflow-wrap: anywhere; }
+
+.dc-momento { display: block; color: var(--sol); font-size: 12px; }
+.dc-momento.vivo { color: var(--ok); }
+
+.dc-sug { display: grid; gap: 2px; }
+.dc-sug-item { display: inline-flex; align-items: center; }
+.dc-sug-item.vivo .chip { border-color: var(--ok); }
+.dc-x { margin-left: -4px; padding: 0 6px; height: 26px; background: none; border: 0; color: var(--fraco); cursor: pointer; }
+.dc-x:hover { color: #fff; }
+.dc-off { opacity: .5; }
+.dc-sug-add input { width: 130px; height: 30px; margin: 0; padding: 0 10px; border-radius: 15px; font-size: 12.5px; }
+.dc-sug-item.duvida .chip { border-style: dashed; opacity: .75; }
+.dc-sug-item.duvida .chip::after { content: " ?"; color: var(--sol); }
+
+/* Clipes em alta: barra compacta + faixa de criadores */
+.dc-barra { display: flex; flex-wrap: wrap; align-items: end; gap: 10px 14px; margin-bottom: 12px; }
+.dc-campo { display: grid; gap: 4px; color: var(--suave); font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.dc-campo select { height: 34px; min-width: 150px; margin: 0; padding: 0 8px; font-size: 13px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.dc-atualizar { height: 34px; }
+.dc-seg-grupo { display: inline-flex; border: 1px solid var(--linha2); border-radius: 9px; overflow: hidden; }
+.dc-seg-grupo button { height: 32px; padding: 0 12px; background: none; border: 0; border-right: 1px solid var(--linha2); color: var(--suave); font-size: 12.5px; font-weight: 600; text-transform: none; letter-spacing: 0; }
+.dc-seg-grupo button:last-child { border-right: 0; }
+.dc-seg-grupo button[aria-pressed="true"] { background: rgba(255, 45, 149, .18); color: #fff; }
+.dc-faixa { margin-bottom: 12px; padding: 10px; background: rgba(255, 255, 255, .02); border: 1px solid var(--linha2); border-radius: 12px; }
+.dc-faixa-topo { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 8px; }
+.dc-link { background: none; border: 0; color: var(--ciano); font-size: 12.5px; cursor: pointer; }
+.dc-pessoas { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.dc-pessoa { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 12px 0 4px; background: rgba(255, 255, 255, .03); border: 1px solid var(--linha2); border-radius: 19px; color: var(--texto); font-size: 13px; cursor: pointer; white-space: nowrap; }
+.dc-pessoa.todos { padding: 0 14px; }
+.dc-pessoa img, .dc-pessoa i { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; }
+.dc-pessoa i { display: grid; place-items: center; background: var(--card2); font-style: normal; font-weight: 700; color: var(--suave); }
+.dc-pessoa small { color: var(--ok); font-size: 11.5px; font-weight: 700; }
+.dc-pessoa.vivo img, .dc-pessoa.vivo i { box-shadow: 0 0 0 2px var(--ok); }
+.dc-pessoa[aria-pressed="true"] { border-color: var(--rosa); background: rgba(255, 45, 149, .16); }
+.dc-pessoa.duvida { border-style: dashed; opacity: .7; }
+.dc-editando { display: inline-flex; align-items: center; flex: none; }
+.dc-foco { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; color: #fff; font-weight: 600; }

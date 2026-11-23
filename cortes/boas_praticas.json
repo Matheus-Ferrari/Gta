@@ -1,0 +1,301 @@
+{
+ "versao": "2026-11-22",
+ "itens": [
+  {
+   "id": "instagram-reels-duracao-maxima",
+   "titulo": "Reels: gravar/editar até 20 minutos; acima de 3 minutos não é recomendado a novos públicos",
+   "plataforma": "instagram",
+   "tipo": "oficial",
+   "fonte": "Central de Ajuda do Instagram — \"Como gravar um reel no Instagram\"",
+   "url": "https://www.facebook.com/help/instagram/225190788256708",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Limite de duração de Reels orgânicos; o corte para alcance de novos públicos é 3 minutos.",
+   "resumo": "A Central de Ajuda diz: \"Com o Instagram Reels, é possível gravar e editar vídeos de até 20 minutos\" (um ou vários clipes somando até 20 min) e que \"reels com mais de três minutos não serão recomendados para novos públicos\". Também avisa que o Reels não está disponível para todas as contas. A página não informa limite de tamanho de arquivo.",
+   "regra": {
+    "duracao": {
+     "max": 1200
+    }
+   }
+  },
+  {
+   "id": "instagram-reels-formato-tecnico",
+   "titulo": "Reels: proporção entre 1,91:1 e 9:16, mínimo 30 FPS e resolução mínima de 720 px",
+   "plataforma": "instagram",
+   "tipo": "tecnico",
+   "fonte": "Central de Ajuda do Instagram — \"Tamanho e taxas de proporção de reels no Instagram\"",
+   "url": "https://www.facebook.com/help/instagram/1038071743007909",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Requisito técnico de upload de Reels (orgânico).",
+   "resumo": "A página diz: \"Você pode carregar um reel com taxa de proporção entre 1,91:1 e 9:16\" e \"Os reels devem ter uma taxa de quadros mínima de 30 FPS (quadros por segundo) e uma resolução mínima de 720 pixels\". Capa recomendada: 420 x 654 px (1:1,55). A página não diz se os 720 px se referem à largura ou à altura, nem cita 1080x1920.",
+   "regra": {
+    "fps": {
+     "min": 30
+    }
+   }
+  },
+  {
+   "id": "instagram-reels-boas-praticas-recomendacao",
+   "titulo": "Reels recomendáveis: vertical 9x16 em alta resolução, sem bordas, gancho nos 3 primeiros segundos, até 3 minutos",
+   "plataforma": "instagram",
+   "tipo": "oficial",
+   "fonte": "Instagram for Creators — \"Recomendações no Instagram: o que os criadores de conteúdo precisam saber\" (30/08/2022, atualizado 25/04/2023)",
+   "url": "https://creators.instagram.com/blog/instagram-recommendations-eligibility-tips-creators",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Conteúdo orgânico que se quer elegível às recomendações (Explorar/Reels para não seguidores). Texto de 2022/2023; a regra dos 3 minutos é confirmada pela Central de Ajuda atual.",
+   "resumo": "Recomenda \"usar vídeos verticais 9 x 16 de alta resolução, sem bordas, nos quais o texto não cobre a maior parte da tela\"; \"Seja breve\"; \"Atraia o visualizador nos primeiros 3 segundos e mantenha o interesse o tempo inteiro\"; \"Poste conteúdo original\". Pede evitar reels com marca d'água, desfocados ou de baixa qualidade e não reenviar reels que já estão no Instagram. \"Para ser recomendado, seu conteúdo deve ter 3 minutos ou menos.\"",
+   "regra": {
+    "duracao": {
+     "max": 180
+    }
+   }
+  },
+  {
+   "id": "instagram-conteudo-original",
+   "titulo": "Diretrizes de conteúdo original: borda, marca d'água, mudança de velocidade ou só dar crédito não tornam o conteúdo original",
+   "plataforma": "instagram",
+   "tipo": "oficial",
+   "fonte": "Instagram for Creators — \"Diretrizes de conteúdo original\"",
+   "url": "https://creators.instagram.com/original-content-guidelines",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Cortes feitos a partir de conteúdo de terceiros (ex.: lives de outros streamers) e contas que republicam conteúdo.",
+   "resumo": "Lista como edições de baixo esforço \"bordas, marcas d'água, alterações de velocidade, apenas creditar o criador original\". Teste: se sua contribuição fosse removida e o conteúdo \"permaneceria praticamente o mesmo\", não é original. Contas que postam principalmente conteúdo não criado nem editado de forma significativa por elas \"podem não ser vistas nas recomendações\"; voltam a se qualificar quando uma porcentagem significativa do que postaram recentemente for original \"em um período de 30 dias\". O usuário é responsável por obter permissões para usar trabalho de outros."
+  },
+  {
+   "id": "meta-reels-anuncios-area-segura",
+   "titulo": "Anúncios em vídeo no Instagram Reels: 9:16, 1440x2560, área segura de 14% no topo, 35% na base e 6% em cada lado",
+   "plataforma": "instagram",
+   "tipo": "anuncios",
+   "fonte": "Guia de Anúncios do Facebook (Meta) — Especificações de anúncios de vídeo de Reconhecimento no posicionamento Instagram Reels",
+   "url": "https://www.facebook.com/business/ads-guide/update/video/instagram-reels",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "A fonte trata de ANÚNCIOS e não prevê distribuição orgânica. Pode servir só como referência aproximada de onde a interface (ícone do perfil, CTA) cobre o vídeo; para orgânico a Meta não publica margens.",
+   "resumo": "Texto da Meta: \"Deixe pelo menos 14% da parte superior, 35% da parte inferior e 6% de cada lado do seu ativo sem texto, logotipos ou outros elementos criativos importantes\", para não serem cortados ou cobertos pelo ícone do perfil ou chamada para ação. Proporção 9:16, resolução 1.440 x 2.560 px, MP4/MOV, duração de 0 segundos a 15 minutos, até 4 GB, H.264, taxa de quadros fixa, varredura progressiva, áudio AAC estéreo a 128 kbps ou mais (\"opcional, mas muito recomendado\"). Conversão para 1080x1920 (conta minha, não da fonte): topo 14% de 1920 = 268,8 ≈ 269 px; base 35% de 1920 = 672 px; laterais 6% de 1080 = 64,8 ≈ 65 px. A página de anúncios de imagem em Reels usa a mesma regra (\"cerca de 14%...\").",
+   "regra": {
+    "area_segura": {
+     "largura": 1080,
+     "altura": 1920,
+     "topo": 269,
+     "base": 672,
+     "esquerda": 65,
+     "direita": 65
+    },
+    "resolucao": {
+     "largura": 1440,
+     "altura": 2560,
+     "proporcao": "9:16"
+    },
+    "duracao": {
+     "min": 0,
+     "max": 900
+    }
+   }
+  },
+  {
+   "id": "instagram-hub-boas-praticas",
+   "titulo": "Instagram: hub \"Best Practices\" no painel profissional, com dicas personalizadas da conta",
+   "plataforma": "instagram",
+   "tipo": "oficial",
+   "fonte": "Meta Newsroom — \"Introducing Best Practices, an Education Hub for Creators on Instagram\" (01/10/2024)",
+   "url": "https://about.fb.com/news/2024/10/best-practices-education-hub-creators-instagram/",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Onde consultar as orientações oficiais e personalizadas da sua própria conta. A notícia não traz números nem regras.",
+   "resumo": "A Meta apresenta um destino educativo dentro do app, no painel profissional, com as seções Criação (frequência de posts, prender a atenção, duração dos reels, áudio em alta e hashtags), Engajamento, Alcance (algoritmos e relação entre reels e crescimento de seguidores), Monetização e Diretrizes. Cada seção traz conselhos gerais e dicas personalizadas sobre o desempenho da conta. A página não dá valores concretos (ex.: duração ideal ou frequência)."
+  },
+  {
+   "id": "tiktok-duracao-gravacao-upload",
+   "titulo": "TikTok: gravação no app até 10 minutos, upload no app até 60 minutos",
+   "plataforma": "tiktok",
+   "tipo": "oficial",
+   "fonte": "TikTok Support — ferramentas de câmera (seção \"Video length\")",
+   "url": "https://www.tiktok.com/support/faq_detail?id=7581821547946580492",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Limite de duração de vídeos orgânicos enviados pelo app. O limite pode variar por conta; ver também o item do TikTok Studio (web), que cita 30 minutos.",
+   "resumo": "\"Videos you record in TikTok can be up to 10 minutes long.\" e \"Videos you upload in TikTok can be up to 60 minutes long.\" Nota da página: se você escolher um som antes de gravar ou enviar, a duração do vídeo é determinada pela duração do som. (URL original support.tiktok.com/en/using-tiktok/creating-videos/camera-tools redireciona para esta; conteúdo lido com renderização de JavaScript.)",
+   "regra": {
+    "duracao": {
+     "max": 3600
+    }
+   }
+  },
+  {
+   "id": "tiktok-studio-requisitos-upload",
+   "titulo": "TikTok Studio (navegador): MP4 ou WebM, 720x1280 ou maior, até 30 minutos, menos de 10 GB",
+   "plataforma": "tiktok",
+   "tipo": "tecnico",
+   "fonte": "TikTok Support — Creator tools / TikTok Studio (seção \"Upload\" dos recursos no navegador)",
+   "url": "https://support.tiktok.com/en/using-tiktok/creating-videos/creator-tools-on-tiktok?lang=en",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Upload pelo TikTok Studio no navegador (desktop). Diverge do limite de 60 min do upload no app.",
+   "resumo": "\"Uploaded videos must be: In MP4 or WebM file format; 720x1280 resolution or higher; Up to 30 minutes in length; Less than 10 GB\". 720x1280 é o MÍNIMO (\"or higher\"); a página não cita proporção explicitamente.",
+   "regra": {
+    "resolucao": {
+     "largura": 720,
+     "altura": 1280,
+     "minimo": true
+    },
+    "duracao": {
+     "max": 1800
+    }
+   }
+  },
+  {
+   "id": "tiktok-qualidade-1080p-hd",
+   "titulo": "TikTok: gravar e exportar em 1080p ou mais, evitar recodificar e ativar o upload em HD",
+   "plataforma": "tiktok",
+   "tipo": "oficial",
+   "fonte": "TikTok Creator Academy — \"Filming high-quality videos that keep viewers watching\" (atualizado em 18/08/2026)",
+   "url": "https://www.tiktok.com/creator-academy/article/Filming-High-Quality-Videos",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Exportação e upload de vídeos orgânicos no TikTok.",
+   "resumo": "\"Export at 1080p or higher, and avoid re-encoding the file along the way.\" \"TikTok defaults to standard quality on upload. If you don't toggle on the HD upload option in settings, your video won't post in the highest available quality\". Recomenda capturar imagem nítida, estável e bem iluminada \"in 1080p or above\". Lista problemas comuns: imagem desfocada, tremida, escura/exposição irregular, baixa resolução e falta de acabamento na pós-produção."
+  },
+  {
+   "id": "tiktok-preencher-tela-sem-barras",
+   "titulo": "TikTok: preencher a tela, sem barras desfocadas; em gameplay, dividir a tela (rosto em cima, jogo embaixo)",
+   "plataforma": "tiktok",
+   "tipo": "oficial",
+   "fonte": "TikTok Creator Academy — \"Create videos that fill the screen and look made for TikTok\" (atualizado em 18/08/2026)",
+   "url": "https://www.tiktok.com/creator-academy/article/fill-the-screen",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Reenquadramento de material horizontal (ex.: live 16:9) para vertical.",
+   "resumo": "\"Blurred bars top and bottom shrink your subject into a small box\"; a correção é preencher o quadro. \"Vertical is good. Horizontal is good. The blurry bars are the problem\". Não colocar texto nas barras pretas. Correção: cortar/dar zoom até o assunto preencher a tela e ligar o rastreamento (auto-track) para manter o assunto centralizado. \"Doing gaming, a podcast, or a reaction? Split the screen instead — your face on top, the gameplay or guest below.\""
+  },
+  {
+   "id": "tiktok-cortes-de-videos-longos",
+   "titulo": "TikTok: transformar vídeo longo em curto com Pick-Hook-Native (um momento, gancho novo, 9:16 com legendas)",
+   "plataforma": "tiktok",
+   "tipo": "oficial",
+   "fonte": "TikTok Creator Academy — \"Repurposing long videos into short-form TikToks\" (atualizado em 13/10/2026)",
+   "url": "https://www.tiktok.com/creator-academy/article/long-to-short-form",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Cortes de lives/VODs e reaproveitamento de conteúdo longo próprio.",
+   "resumo": "Três passos: Pick (um único momento que se sustente sozinho, priorizando trechos que já geraram reações), Hook (abrir o clipe com texto sobreposto em destaque ou narração rápida, porque um trecho tirado do meio \"opens mid-thought\") e Native (\"Format the clip in 9:16 vertical so it takes the full screen\", ligar legendas automáticas para quem assiste sem som e usar elementos nativos). Erros comuns citados: comprimir todas as ideias num só curto, postar sem gancho novo, não usar legendas, postar clipes horizontais ou com tarja (letterbox)."
+  },
+  {
+   "id": "tiktok-originalidade-fyf",
+   "titulo": "TikTok: conteúdo não original ou reutilizado sem nada novo não é elegível ao Para Você (FYF)",
+   "plataforma": "tiktok",
+   "tipo": "oficial",
+   "fonte": "Diretrizes da Comunidade do TikTok — Integrity and Authenticity (\"Unoriginal Content and Intellectual Property Rights\")",
+   "url": "https://www.tiktok.com/community-guidelines/en/integrity-authenticity",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Cortes de conteúdo de terceiros; distribuição orgânica no feed Para Você.",
+   "resumo": "\"You should only post content you created or have the right to share.\" Conteúdo que viola propriedade intelectual é removido. \"Content is also ineligible for the FYF if it includes unoriginal or reused material without anything new.\" O artigo da Creator Academy sobre originalidade (tiktok.com/creator-academy/article/tiktok-originality-policy, também aberto) define não original como conteúdo \"largely repurposed from another source without adding any creative edits\" e diz que ele pode ser removido do Para Você."
+  },
+  {
+   "id": "tiktok-anuncios-in-feed",
+   "titulo": "Anúncios In-Feed do TikTok: 9:16 com no mínimo 540x960, até 10 minutos, área segura só em arquivos para download",
+   "plataforma": "tiktok",
+   "tipo": "anuncios",
+   "fonte": "TikTok Ads Manager — Ajuda: \"TikTok Auction In-Feed Ads\" (mesmos números em \"Video ads specifications\")",
+   "url": "https://ads.tiktok.com/help/article/tiktok-auction-in-feed-ads",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "A fonte trata de ANÚNCIOS (não Spark) e não prevê distribuição orgânica.",
+   "resumo": "\"Vertical (recommended): 9:16, more than or equal to 540*960px\" (mínimo, não recomendado de resolução); \"Video duration: up to 10 minutes\"; arquivo até 500 MB; bitrate \"More than or equal to 516 kbps\". A área segura não é dada em números no texto: a página manda baixar arquivos .zip e diz que o tamanho depende da dimensão (vertical, horizontal ou quadrado), do tamanho da legenda do anúncio e de formatos adicionais. Spark Ads: duração sem restrição.",
+   "regra": {
+    "resolucao": {
+     "largura": 540,
+     "altura": 960,
+     "proporcao": "9:16",
+     "minimo": true
+    },
+    "duracao": {
+     "max": 600
+    }
+   }
+  },
+  {
+   "id": "tiktok-creative-center",
+   "titulo": "TikTok Creative Center: anúncios em destaque e o que está em alta para o público-alvo",
+   "plataforma": "tiktok",
+   "tipo": "tendencia",
+   "fonte": "TikTok for Business — Creative Center",
+   "url": "https://ads.tiktok.com/business/creativecenter/",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Ferramenta voltada a anunciantes. Serve para observar tendências do momento; tendência muda rápido e não garante alcance de vídeos orgânicos.",
+   "resumo": "A página oferece Top Ads (campanhas de alto desempenho e os elementos criativos delas), ferramentas criativas com IA para anúncios e a Commercial Music Library, e diz \"Learn what's trending with your target audience\". Não publica especificações técnicas nem aviso sobre os dados."
+  },
+  {
+   "id": "youtube-shorts-duracao-proporcao",
+   "titulo": "YouTube Shorts: até 3 minutos com proporção quadrada ou vertical; Shorts acima de 1 minuto com reivindicação de Content ID são bloqueados",
+   "plataforma": "youtube",
+   "tipo": "oficial",
+   "fonte": "Ajuda do YouTube — \"Understand three-minute YouTube Shorts\"",
+   "url": "https://support.google.com/youtube/answer/15424877?hl=en",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Classificação de uploads como Shorts e risco de bloqueio por direitos autorais (ex.: música/jogo com Content ID).",
+   "resumo": "\"You can now create YouTube Shorts up to three minutes in length.\" Vídeos enviados após 15/10/2024 \"with a square or vertical aspect ratio up to three minutes in length will be categorized as Shorts\" (canais oficiais de artista: após 08/12/2025). \"Shorts longer than one minute that have an active Content ID claim, regardless of the policy, will be blocked on YouTube.\" A página de upload pelo computador (support.google.com/youtube/answer/12779649) repete: \"Up to 3 minutes\" e proporção quadrada ou vertical.",
+   "regra": {
+    "duracao": {
+     "max": 180
+    }
+   }
+  },
+  {
+   "id": "youtube-shorts-dicas-blog",
+   "titulo": "YouTube Shorts: filmar em 9:16, prender a atenção nos primeiros segundos, usar texto/legendas",
+   "plataforma": "youtube",
+   "tipo": "oficial",
+   "fonte": "Blog oficial do YouTube — \"Your guide to getting started with YouTube Shorts\" (08/04/2025)",
+   "url": "https://blog.youtube/creator-and-artist-stories/your-guide-to-getting-started-with-youtube-shorts/",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Criação de Shorts orgânicos.",
+   "resumo": "\"Film in a 9:16 aspect ratio (vertical). This format is optimized for mobile viewing.\" \"Capture attention in the first few seconds to prevent viewers from scrolling.\" \"Overlay text to emphasize key points or add captions.\" \"Shorts are capped at 3 minutes, so get your message across quickly.\" Também sugere títulos claros, hashtags relevantes como #Shorts, postar com regularidade e acompanhar o YouTube Analytics. A fonte não cita resolução em pixels (1080x1920 não aparece)."
+  },
+  {
+   "id": "youtube-shorts-audio-em-alta",
+   "titulo": "YouTube Shorts: áudio em alta pode ampliar a exibição (afirmação do blog, sem garantia)",
+   "plataforma": "youtube",
+   "tipo": "tendencia",
+   "fonte": "Blog oficial do YouTube — \"Your guide to getting started with YouTube Shorts\" (08/04/2025)",
+   "url": "https://blog.youtube/creator-and-artist-stories/your-guide-to-getting-started-with-youtube-shorts/",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Escolha de áudio em Shorts; usar só músicas licenciadas/da biblioteca do YouTube. Hipótese de alcance, não regra.",
+   "resumo": "O blog diz: \"Add trending or licensed music from YouTube's library\" e \"Using trending audio will increase the likelihood of your shorts being shown to a wider audience.\" É uma afirmação de tendência da plataforma, sem números e sem garantia de alcance."
+  },
+  {
+   "id": "youtube-especificacoes-upload",
+   "titulo": "YouTube: configurações de codificação recomendadas (MP4, H.264, AAC-LC 48 kHz, mesmo FPS da gravação)",
+   "plataforma": "youtube",
+   "tipo": "tecnico",
+   "fonte": "Ajuda do YouTube — \"Recommended upload encoding settings\"",
+   "url": "https://support.google.com/youtube/answer/1722171",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Exportação de vídeos para o YouTube (vale como referência técnica também para Shorts).",
+   "resumo": "Contêiner MP4 (moov atom no início, \"Fast Start\"); áudio AAC-LC, Opus ou Eclipsa, \"Sample rate: 48kHz\", estéreo a 384 kbps; vídeo H.264 High Profile, varredura progressiva, \"2 consecutive B frames\", \"Closed GOP. GOP of half the frame rate.\", \"Chroma subsampling: 4:2:0\". \"Content should be encoded and uploaded in the same frame rate it was recorded.\" Taxas comuns: 24, 25, 30, 48, 50, 60 fps (outras também aceitas). Bitrate 1080p SDR: 8 Mbps (24–30 fps) e 12 Mbps (48–60 fps). Não há FPS mínimo, por isso não entra em `regra`."
+  },
+  {
+   "id": "twitch-api-clips",
+   "titulo": "Twitch API: Create Clip (5 a 60 s, padrão 30, escopo clips:edit) e Get Clips Download (só editores do canal)",
+   "plataforma": "twitch",
+   "tipo": "tecnico",
+   "fonte": "Twitch Developers — API Reference: Clips",
+   "url": "https://dev.twitch.tv/docs/api/reference/clips",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Integração do editor com a API da Twitch para criar clipes e baixar arquivos de clipes.",
+   "resumo": "Create Clip (POST /helix/clips): exige user access token com escopo clips:edit; \"This API captures up to 90 seconds of the broadcaster's stream\"; duration: \"Possible values range from 5 to 60 inclusively with a precision of 0.1\", padrão 30; processo assíncrono — \"If after 60 seconds Get Clips hasn't returned the clip, assume it failed\"; edit_url válido por até 24 horas ou até a publicação. Create Clip From VOD (POST /helix/videos/clips): escopos editor:manage:clips ou channel:manage:clips, 5 a 60 s (padrão 30). Get Clips: duration com precisão de 0,1 s; vod_offset fica nulo durante um atraso \"typically minutes long\". Get Clips Download (GET /helix/clips/downloads): token com editor:manage:clips ou channel:manage:clips; erro 403 quando \"The user is not an editor for the specified broadcaster\"; até 10 clipes por requisição; \"Limited to 100 requests per minute\"; retorna landscape_download_url e portrait_download_url (nulos se indisponíveis); links temporários.",
+   "regra": {
+    "duracao": {
+     "min": 5,
+     "max": 60
+    }
+   }
+  },
+  {
+   "id": "twitch-ajuda-clips",
+   "titulo": "Twitch: clipes de até 60 s, versão retrato gerada automaticamente; download só de clipes do seu canal ou criados por você",
+   "plataforma": "twitch",
+   "tipo": "oficial",
+   "fonte": "Twitch Help — \"How to Create, Edit, and Share Clips\"",
+   "url": "https://help.twitch.tv/s/article/how-to-use-clips?language=en_US",
+   "consultado_em": "2026-11-22",
+   "aplicabilidade": "Uso de clipes da Twitch como matéria-prima de cortes verticais.",
+   "resumo": "\"Adjust the length of the clip you'd like to create, up to 60 seconds\". \"When a clip is created, we auto-generate a portrait version of the clip next to your landscape clip\"; layouts retrato \"Stacked\" (duas caixas, câmera e jogo) ou \"Full\". \"You can download landscape or portrait versions of clips of your channel.\" / \"...of clips you created.\" Quem pode criar clipes depende das configurações do streamer (pode restringir a seguidores ou inscritos, ou bloquear usuários). A página diz que clipes retrato fora de 9x16 causaram bugs e o recurso de mudar a proporção foi adiado. (Página carregada com renderização de JavaScript.)",
+   "regra": {
+    "duracao": {
+     "max": 60
+    }
+   }
+  }
+ ]
+}
