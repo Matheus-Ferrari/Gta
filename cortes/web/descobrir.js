@@ -257,6 +257,27 @@
       avisar('Arquivo importado. Use “Abrir no editor”.');
     } catch (e) { avisar(e.message, true); } finally { b.disabled = false; recarregar(); }
   };
+  /* Do clipe direto para o editor: baixa o arquivo público do clipe (com autorização confirmada). */
+  function editarClipe(x) {
+    const d = el('dialog', { className: 'tpl-dlg', style: 'width:min(480px,calc(100vw - 32px))' });
+    const aut = el('input', { type: 'checkbox' }), prog = el('p', { className: 'dica', style: 'margin:0' });
+    const ir = botao('Baixar e editar', acao(async () => {
+      if (!aut.checked) { prog.textContent = 'Marque a autorização para continuar.'; return; }
+      ir.disabled = true;
+      try {
+        const t = await api('/api/descobrir/clip/editar', { id: x.id, titulo: x.titulo, canal: x.canal, autorizado: true });
+        const r = await aguardarTarefa(t.id, y => { prog.textContent = `${y.mensagem} (${Math.round(y.progresso * 100)}%)`; });
+        d.close(); irPara('editor', { corte: r.corte });
+      } catch (e) { prog.textContent = e.message; prog.className = 'dica erro'; ir.disabled = false; }
+    }), 'btn mini');
+    d.append(el('div', { style: 'padding:18px;display:grid;gap:12px' },
+      el('h2', { className: 'tit', style: 'margin:0', textContent: `Editar o clipe de ${x.canal}` }),
+      el('p', { className: 'dica', style: 'margin:0', textContent: `“${x.titulo || x.id}” · ${Math.round(x.duracao)} s. O clipe é baixado, vira um corte em Meus Cortes e abre no editor. Para ter mais tempo antes e depois, use Cortar da gravação.` }),
+      el('label', { className: 'marcar autoriza' }, aut, 'Tenho autorização para usar este clipe (meu canal, permissão do criador ou conteúdo liberado para cortes).'),
+      el('div', { className: 'ferramentas', style: 'margin:0' }, ir, botao('Cancelar', () => d.close())), prog));
+    d.addEventListener('close', () => d.remove());
+    document.body.append(d); d.showModal();
+  }
   /* Do clipe para o corte: abre a gravação no estúdio com o trecho marcado. */
   async function cortarDaGravacao(x) {
     const a = Math.max(0, x.vod_offset - 10), b = x.vod_offset + x.duracao + 10;
@@ -294,7 +315,8 @@
         el('small', { className: 'dica', style: 'margin:0', textContent: `Criado ${dataHora(x.criado)}${soLink ? ' · a Twitch só entrega o arquivo ao dono do canal e aos editores dele' : ''}` }),
         el('div', { className: 'ferramentas', style: 'margin:0' },
           botao('Assistir', ver), link('Abrir link', x.url),
-          x.vod_url ? botao('Cortar da gravação', () => cortarDaGravacao(x), 'btn mini', { title: 'Abre a gravação em Gerar Cortes com início e fim já marcados neste momento (com folga de 10 s)' }) : null,
+          botao('Editar clipe', () => editarClipe(x), 'btn mini', { title: 'Baixa o clipe, cria o corte e abre no editor' }),
+          x.vod_url ? botao('Cortar da gravação', () => cortarDaGravacao(x), 'btn leve mini', { title: 'Abre a gravação em Gerar Cortes com início e fim já marcados neste momento (com folga de 10 s)' }) : null,
           importado ? botao('Abrir no editor', () => irPara('editor', { corte: importado }), 'btn mini') : null,
           !importado && !soLink ? botao('Importar (oficial)', importarOficial(x, recarregar), 'btn mini', { title: 'GET /clips/downloads: só funciona se você for o dono do canal ou editor dele. Sem permissão, o clipe fica como Só link.' }) : null,
           !importado ? botao('Importar arquivo autorizado', importarArquivo(x, recarregar), 'btn leve mini', { title: 'Recebeu o arquivo do criador? Escolha o arquivo do PC e ele vira um corte editável.' }) : null,
@@ -340,8 +362,10 @@
       const todos = el('button', { className: 'dc-pessoa todos', type: 'button', ariaPressed: String(c.origem === 'categoria'), onclick: () => { Object.assign(c, { origem: 'categoria', criador: '', canal: '' }); desenhar(); } }, el('span', { textContent: 'Todos os canais' }));
       let itens = [];
       if (c.faixa === 'sugeridos') itens = r.sugeridos.filter(k => !k.nao_achado).map(k => {
-        const p = pessoa(k, () => (c.editar ? corrigir(k) : verCanal(k)), !k.manual && (k.seguidores || 0) < 50000 ? ' duvida' : '');
-        return c.editar ? el('span', { className: 'dc-editando' }, p, el('button', { className: 'dc-x', type: 'button', title: 'Tirar da lista', textContent: '×', onclick: acao(async () => { await api('/api/descobrir/sugestoes/editar', { idioma: r.idioma, nome: k.busca, acao: 'remover' }); desenhar(); }) })) : p;
+        const p = pessoa(k, () => verCanal(k), !k.manual && (k.seguidores || 0) < 50000 ? ' duvida' : '');
+        return c.editar ? el('span', { className: 'dc-editando' }, p,
+          el('button', { className: 'dc-x', type: 'button', title: 'Corrigir o canal', textContent: '✎', onclick: () => corrigir(k) }),
+          el('button', { className: 'dc-x', type: 'button', title: 'Tirar da lista', textContent: '×', onclick: acao(async () => { await api('/api/descobrir/sugestoes/editar', { idioma: r.idioma, nome: k.busca, acao: 'remover' }); desenhar(); }) })) : p;
       });
       if (c.faixa === 'vivo') itens = r.em_alta.map(k => pessoa({ ...k, ao_vivo: true }, () => verCanal(k)));
       if (c.faixa === 'favoritos') itens = ((D.criadores && D.criadores.criadores) || []).filter(x => x.contas.some(k => k.plataforma === 'twitch' && k.id)).map(x => {
@@ -351,14 +375,14 @@
       });
       const corrigir = acao(async k => {
         const login = prompt(`Canal certo da Twitch para “${k.busca}” (login):`, k.login); if (!login || !login.trim()) return;
-        await api('/api/descobrir/sugestoes/editar', { idioma: r.idioma, nome: k.busca, acao: 'trocar', login }); desenhar();
+        await api('/api/descobrir/sugestoes/editar', { idioma: r.idioma, nome: k.busca, acao: 'trocar', login }); c.editar = false; desenhar();
       });
       faixa.replaceChildren(
         el('div', { className: 'dc-faixa-topo' }, el('div', { className: 'dc-seg-grupo' }, ...abas.map(([id, t]) => el('button', { type: 'button', textContent: t, ariaPressed: String(c.faixa === id), onclick: () => { c.faixa = id; pintarFaixa(r); } }))),
           c.faixa === 'sugeridos' ? el('button', { className: 'dc-link', type: 'button', textContent: c.editar ? 'Pronto' : 'Editar lista', onclick: () => { c.editar = !c.editar; pintarFaixa(r); } }) : null,
           c.faixa === 'sugeridos' && c.editar ? el('form', { className: 'dc-sug-add', onsubmit: acao(async ev => { ev.preventDefault(); const n = ev.target.n.value.trim(); if (!n) return; await api('/api/descobrir/sugestoes/editar', { idioma: r.idioma, nome: n }); desenhar(); }) },
             el('input', { name: 'n', placeholder: '+ adicionar criador', autocomplete: 'off', maxLength: 40 })) : null,
-          c.editar && c.faixa === 'sugeridos' ? el('span', { className: 'dica', style: 'margin:0', textContent: 'Clique num nome para corrigir o canal.' }) : null),
+          c.editar && c.faixa === 'sugeridos' ? el('span', { className: 'dica', style: 'margin:0', textContent: '✎ corrige o canal, × tira da lista.' }) : null),
         el('div', { className: 'dc-pessoas' }, todos, ...(itens.length ? itens : [el('span', { className: 'dica', style: 'margin:0', textContent: c.faixa === 'favoritos' ? 'Associe contas da Twitch em Favoritos.' : 'Ninguém aqui agora.' })])));
     }
     api('/api/descobrir/sugestoes' + qs({ idioma: c.idioma || 'en' })).then(r => { if (ativa(g)) { D.sug = r; pintarFaixa(r); } })

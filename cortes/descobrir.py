@@ -669,6 +669,37 @@ class Descobrir:
         cid = reg["id"]
         return fila.adicionar("clip", "Importando clip da Twitch (oficial)", lambda t: canais.importar_clip(cid, t), f"clip:{cid}").publico()
 
+    def editar_clipe(self, d: dict) -> dict:
+        """Baixa o arquivo público do clipe (como o player da Twitch faz), vira corte e vai para o editor. Só com autorização confirmada."""
+        if not d.get("autorizado"):
+            raise ValueError("Confirme que você tem autorização para usar este clipe.")
+        cid = re.sub(r"[^\w-]", "", str(d.get("id") or ""))[:120]
+        if not cid:
+            raise ValueError("Clipe inválido.")
+        titulo, canal = str(d.get("titulo") or "")[:200], str(d.get("canal") or "")[:60]
+
+        def trabalho(t):
+            import subprocess
+            import sys as _sys
+            from . import vods
+            from .fontes import YTDLP
+            pasta = DADOS / "clipes"
+            pasta.mkdir(parents=True, exist_ok=True)
+            arquivo = pasta / f"{cid}.mp4"
+            if not arquivo.is_file():
+                t.avancar(0.1, "Baixando o clipe")
+                r = subprocess.run([*YTDLP, "-f", "best[ext=mp4]/best", "-o", str(arquivo), f"https://clips.twitch.tv/{cid}"],
+                                   capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                   creationflags=subprocess.CREATE_NO_WINDOW if _sys.platform == "win32" else 0)
+                if r.returncode != 0 or not arquivo.is_file():
+                    erro = (r.stderr.strip().splitlines() or ["erro desconhecido"])[-1]
+                    raise RuntimeError(f"A Twitch não entregou o clipe: {erro[:200]}")
+            info = vods.abrir_arquivo(str(arquivo))
+            t.avancar(0.4, "Criando o corte")
+            return vods.criar_corte({"tipo": "arquivo", "id": info["id"], "inicio": 0, "fim": max(1.0, info["duracao"] - 0.05),
+                                     "titulo": titulo, "streamer": canal}, t)
+        return fila.adicionar("corte", f"Editando o clipe de {canal or 'Twitch'}", trabalho, f"editar:{cid}").publico()
+
     # ------------------------------------------------------ trabalho de fundo
 
     def _laco(self) -> None:
@@ -957,5 +988,6 @@ POST: dict = {caminho: _rota(f) for caminho, f in {
     "/api/descobrir/analise/corte": lambda d: analisador.criar_corte(d, fila),
     "/api/descobrir/sugestoes/editar": sugestao_editar,
     "/api/descobrir/aovivo/iniciar": captura.iniciar,
+    "/api/descobrir/clip/editar": descobrir.editar_clipe,
     "/api/descobrir/aovivo/parar": lambda _: captura.parar(),
 }.items()}
